@@ -1,0 +1,386 @@
+package handler
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"security-ops-agent/internal/model"
+	"security-ops-agent/internal/service"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+type Handler struct {
+	db      *gorm.DB
+	ai      *service.AIService
+	checker *service.AlertChecker
+}
+
+func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker) *Handler {
+	h := &Handler{db: db, ai: ai, checker: checker}
+	h.seedData()
+	return h
+}
+
+// seedData 初始化内置 Skills
+func (h *Handler) seedData() {
+	skills := []model.Skill{
+		{Name: "查看进程", Description: "列出 CPU 占用最高的 10 个进程", Command: "ps aux --sort=-%cpu | head -11", RiskLevel: "safe", Category: "系统"},
+		{Name: "查看磁盘使用", Description: "查看各分区磁盘使用情况", Command: "df -h", RiskLevel: "safe", Category: "系统"},
+		{Name: "查看内存使用", Description: "查看内存和 Swap 使用情况", Command: "free -h", RiskLevel: "safe", Category: "系统"},
+		{Name: "查看系统负载", Description: "查看系统 1/5/15 分钟平均负载", Command: "uptime", RiskLevel: "safe", Category: "系统"},
+		{Name: "查看网络连接", Description: "查看当前 ESTABLISHED 状态的 TCP 连接数", Command: "ss -t state established | wc -l", RiskLevel: "safe", Category: "网络"},
+		{Name: "查看监听端口", Description: "列出所有正在监听的 TCP/UDP 端口", Command: "ss -tlnp", RiskLevel: "safe", Category: "网络"},
+		{Name: "封禁IP", Description: "使用 iptables 封禁指定 IP", Command: "iptables -A INPUT -s {{IP}} -j DROP", RiskLevel: "high", Params: `["IP"]`, Category: "安全"},
+		{Name: "解封IP", Description: "解除 iptables 对指定 IP 的封禁", Command: "iptables -D INPUT -s {{IP}} -j DROP", RiskLevel: "high", Params: `["IP"]`, Category: "安全"},
+		{Name: "重启服务", Description: "重启指定的 systemd 服务", Command: "systemctl restart {{ServiceName}}", RiskLevel: "high", Params: `["ServiceName"]`, Category: "系统"},
+		{Name: "查看最近登录", Description: "查看最近 20 条系统登录记录", Command: "last -20", RiskLevel: "safe", Category: "安全"},
+		{Name: "查看SSH失败", Description: "查看 SSH 登录失败的记录", Command: "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -20 || journalctl -u sshd --no-pager -n 20 2>/dev/null | grep -i failed", RiskLevel: "safe", Category: "安全"},
+		{Name: "清理旧日志", Description: "删除指定目录下 7 天前的 .log 文件", Command: "find {{Path}} -name '*.log' -mtime +7 -delete", RiskLevel: "dangerous", Params: `["Path"]`, Category: "系统"},
+	}
+	for _, s := range skills {
+		h.db.Where("name = ?", s.Name).FirstOrCreate(&s)
+	}
+}
+
+// ==================== 登录 ====================
+
+func (h *Handler) Login(c *gin.Context) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+	if req.Username == "admin" && req.Password == "admin123" {
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"token": "mock-jwt-token-admin-2024"}})
+		return
+	}
+	c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
+}
+
+// ==================== 监控数据 ====================
+
+func (h *Handler) PushMetrics(c *gin.Context) {
+	rawBody, _ := c.GetRawData()
+	fmt.Printf("收到推送, body: %s\n", string(rawBody))
+
+	// 重新注入 body，因为 GetRawData 消耗掉了
+	c.Request.Body = io.NopCloser(strings.NewReader(string(rawBody)))
+
+	var req struct {
+		AgentID string        `json:"agent_id"`
+		Metric  *model.Metric `json:"metric"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fmt.Printf("JSON解析失败: %v\n", err)
+		c.JSON(400, gin.H{"code": -1, "message": err.Error()})
+		return
+	}
+
+	if req.Metric != nil {
+		req.Metric.AgentID = req.AgentID
+		req.Metric.CreatedAt = time.Now()
+		h.db.Create(req.Metric)
+		fmt.Printf("指标入库成功: CPU:%.1f%% MEM:%.1f%%\n", req.Metric.CPUPercent, req.Metric.MemPercent)
+	}
+	c.JSON(200, gin.H{"code": 0, "message": "ok"})
+}
+
+func (h *Handler) GetLatestMetrics(c *gin.Context) {
+	agentID := c.Query("agent_id")
+
+	var metrics []model.Metric
+	query := h.db.Order("created_at DESC").Limit(10)
+	if agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	query.Find(&metrics)
+
+	result := make(map[string]interface{})
+	if len(metrics) > 0 {
+		result["cpu_percent"] = metrics[0].CPUPercent
+		result["mem_percent"] = metrics[0].MemPercent
+		result["disk_percent"] = metrics[0].DiskPercent
+		result["load_1m"] = metrics[0].Load1m
+		result["net_rx_bytes"] = metrics[0].NetRxBytes
+		result["net_tx_bytes"] = metrics[0].NetTxBytes
+		result["tcp_connections"] = metrics[0].TCPConnections
+		result["updated_at"] = metrics[0].CreatedAt
+	}
+	c.JSON(200, gin.H{"code": 0, "data": result})
+}
+
+func (h *Handler) GetMetricHistory(c *gin.Context) {
+	agentID := c.Query("agent_id")
+	minutes, _ := strconv.Atoi(c.DefaultQuery("minutes", "60"))
+
+	var metrics []model.Metric
+	h.db.Where("agent_id = ? AND created_at > ?", agentID, time.Now().Add(-time.Duration(minutes)*time.Minute)).
+		Order("created_at ASC").Find(&metrics)
+	c.JSON(200, gin.H{"code": 0, "data": metrics})
+}
+
+// ==================== 告警 ====================
+
+func (h *Handler) ListAlerts(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	severity := c.Query("severity")
+
+	var total int64
+	var alerts []model.Alert
+	query := h.db.Model(&model.Alert{})
+	if severity != "" {
+		query = query.Where("severity = ?", severity)
+	}
+	query.Count(&total)
+	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&alerts)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": alerts}})
+}
+
+func (h *Handler) ResolveAlert(c *gin.Context) {
+	id := c.Param("id")
+	now := time.Now()
+	h.db.Model(&model.Alert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"status": "resolved", "resolved_at": now,
+	})
+	c.JSON(200, gin.H{"code": 0, "message": "ok"})
+}
+
+// ==================== Agent ====================
+
+func (h *Handler) Heartbeat(c *gin.Context) {
+	var req struct {
+		AgentID  string `json:"agent_id"`
+		Hostname string `json:"hostname"`
+	}
+	c.ShouldBindJSON(&req)
+	c.JSON(200, gin.H{"code": 0, "message": "ok", "server_time": time.Now()})
+}
+
+func (h *Handler) PullTasks(c *gin.Context) {
+	agentID := c.Query("agent_id")
+	var tasks []model.AgentTask
+	h.db.Where("agent_id = ? AND status = 'pending'", agentID).Order("created_at ASC").Find(&tasks)
+
+	// 标记为 running
+	for _, t := range tasks {
+		now := time.Now()
+		h.db.Model(&t).Updates(map[string]interface{}{"status": "running", "started_at": now})
+	}
+	c.JSON(200, gin.H{"code": 0, "data": tasks})
+}
+
+func (h *Handler) ReportTaskResult(c *gin.Context) {
+	var req struct {
+		TaskID     uint   `json:"task_id"`
+		Stdout     string `json:"stdout"`
+		Stderr     string `json:"stderr"`
+		ExitCode   int    `json:"exit_code"`
+		DurationMs int64  `json:"duration_ms"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+
+	h.db.Model(&model.AgentTask{}).Where("id = ?", req.TaskID).Updates(map[string]interface{}{
+		"status":      map[bool]string{true: "success", false: "failed"}[req.ExitCode == 0],
+		"stdout":      req.Stdout,
+		"stderr":      req.Stderr,
+		"exit_code":   req.ExitCode,
+		"duration_ms": req.DurationMs,
+	})
+
+	// 同步更新 SkillExecution
+	var task model.AgentTask
+	h.db.First(&task, req.TaskID)
+	h.db.Model(&model.SkillExecution{}).Where("id = ?", task.ExecutionID).Updates(map[string]interface{}{
+		"status":      map[bool]string{true: "success", false: "failed"}[req.ExitCode == 0],
+		"stdout":      req.Stdout,
+		"stderr":      req.Stderr,
+		"exit_code":   req.ExitCode,
+		"duration_ms": req.DurationMs,
+	})
+
+	c.JSON(200, gin.H{"code": 0, "message": "ok"})
+}
+
+// ==================== Skills ====================
+
+func (h *Handler) ListSkills(c *gin.Context) {
+	category := c.Query("category")
+	var skills []model.Skill
+	query := h.db.Model(&model.Skill{})
+	if category != "" {
+		query = query.Where("category = ?", category)
+	}
+	query.Find(&skills)
+	c.JSON(200, gin.H{"code": 0, "data": skills})
+}
+
+func (h *Handler) ExecuteSkill(c *gin.Context) {
+	var req struct {
+		SkillName string            `json:"skill_name"`
+		AgentID   string            `json:"agent_id"`
+		Params    map[string]string `json:"params"`
+		Reason    string            `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+
+	var skill model.Skill
+	if err := h.db.Where("name = ?", req.SkillName).First(&skill).Error; err != nil {
+		c.JSON(404, gin.H{"code": -1, "message": "技能不存在"})
+		return
+	}
+
+	// 危险技能必须填写理由
+	if (skill.RiskLevel == "high" || skill.RiskLevel == "dangerous") && req.Reason == "" {
+		c.JSON(400, gin.H{"code": -1, "message": "高危技能执行需填写操作理由"})
+		return
+	}
+
+	// 替换命令模板中的参数
+	cmd := skill.Command
+	for k, v := range req.Params {
+		cmd = replaceVar(cmd, k, v)
+	}
+
+	// 记录执行
+	execution := model.SkillExecution{
+		AgentID:   req.AgentID,
+		SkillID:   skill.ID,
+		SkillName: skill.Name,
+		Command:   cmd,
+		Params:    fmt.Sprintf("%v", req.Params),
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+	h.db.Create(&execution)
+
+	// 创建 Agent 任务
+	task := model.AgentTask{
+		AgentID:     req.AgentID,
+		ExecutionID: execution.ID,
+		Command:     cmd,
+		Status:      "pending",
+		CreatedAt:   time.Now(),
+	}
+	h.db.Create(&task)
+
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{
+		"execution_id": execution.ID,
+		"task_id":      task.ID,
+		"command":      cmd,
+		"message":      "任务已下发，等待 Agent 执行",
+	}})
+}
+
+func (h *Handler) SkillHistory(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+
+	var total int64
+	var records []model.SkillExecution
+	h.db.Model(&model.SkillExecution{}).Count(&total)
+	h.db.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&records)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": records}})
+}
+
+// ==================== AI 对话 ====================
+
+func (h *Handler) Chat(c *gin.Context) {
+	var req struct {
+		Message string `json:"message"`
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+
+	// 构建系统提示词
+	systemMsg := service.ChatMessage{
+		Role: "system",
+		Content: `你是麒麟 Linux 安全运维 AI 助手。你可以：
+1. 分析系统指标、检测安全威胁
+2. 解释告警原因、给出修复建议
+3. 推荐执行合适的运维技能（Skills）
+
+当前可用的 Skills：
+- 查看进程 / 查看磁盘使用 / 查看内存使用 / 查看系统负载
+- 查看网络连接 / 查看监听端口
+- 封禁IP / 解封IP / 重启服务
+- 查看最近登录 / 查看SSH失败
+
+当用户要求执行操作时，建议他们使用 Skills 执行页面。你专注于分析和建议。`,
+	}
+
+	history := []service.ChatMessage{systemMsg}
+	for _, h := range req.History {
+		history = append(history, service.ChatMessage{Role: h.Role, Content: h.Content})
+	}
+	history = append(history, service.ChatMessage{Role: "user", Content: req.Message})
+
+	// SSE 流式返回
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(500, gin.H{"code": -1, "message": "不支持 SSE"})
+		return
+	}
+
+	fullContent, err := h.ai.StreamChat(history, func(delta string) {
+		data, _ := json.Marshal(gin.H{"delta": delta})
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		flusher.Flush()
+	})
+	if err != nil {
+		data, _ := json.Marshal(gin.H{"error": err.Error()})
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+	fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
+	flusher.Flush()
+
+	// 记录对话
+	_ = fullContent
+}
+
+// ==================== Dashboard ====================
+
+func (h *Handler) DashboardStats(c *gin.Context) {
+	var totalMetrics, totalAlerts, openAlerts, todayMetrics int64
+	h.db.Model(&model.Metric{}).Count(&totalMetrics)
+	h.db.Model(&model.Alert{}).Count(&totalAlerts)
+	h.db.Model(&model.Alert{}).Where("status = 'open'").Count(&openAlerts)
+	h.db.Model(&model.Metric{}).Where("created_at > ?", time.Now().Truncate(24*time.Hour)).Count(&todayMetrics)
+
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{
+		"total_metrics": totalMetrics,
+		"total_alerts":  totalAlerts,
+		"open_alerts":   openAlerts,
+		"today_metrics": todayMetrics,
+	}})
+}
+
+func replaceVar(s, key, val string) string {
+	return strings.ReplaceAll(s, "{{"+key+"}}", val)
+}
