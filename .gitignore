@@ -7,3 +7,15 @@ venv/
 .idea/
 .vscode/
 *.log
+
+# Go 编译产物
+bin/
+*.exe
+*.exe~
+
+# 数据库文件（本地测试数据）
+data/
+
+# 测试临时文件
+*.ps1
+test*.json
