@@ -36,7 +36,7 @@ type Config struct {
 }
 
 // 危险命令黑名单
-var dangerousCmds = []string{"rm -rf", "dd if=", "mkfs", "reboot", "shutdown", "poweroff", "halt", ":(){", "chmod 777 /"}
+var dangerousCmds = []string{"rm -rf", "dd if=", "mkfs", "reboot", "shutdown", "poweroff", "halt", ":(){", "chmod 777 /", "-delete", "-exec", "> /dev/sda"}
 
 // 文件日志 writer
 var fileLogger *log.Logger
@@ -396,7 +396,4 @@ func truncate(s string, n int) string {
 		s = strings.Join(lines, "\n") + "\n..."
 	}
 	if len(s) > n {
-		return s[:n] + "..."
-	}
-	return s
-}
+		re
