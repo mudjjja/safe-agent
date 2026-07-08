@@ -1,0 +1,31 @@
+[Unit]
+Description=Kylin Security Agent - 麒麟安全运维Agent采集器
+Documentation=https://github.com/your-org/safe-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/kylin-agent
+Environment=ADMIN_URL=http://127.0.0.1:8080
+Environment=AGENT_ID=kylin-agent-01
+ExecStart=/opt/kylin-agent/agent
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# 日志输出到 journald + stdout
+StandardOutput=append:/var/log/kylin-agent.log
+StandardError=append:/var/log/kylin-agent.log
+
+# 安全加固
+NoNewPrivileges=true
+ProtectHome=false
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

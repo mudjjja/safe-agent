@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,6 +38,35 @@ type Config struct {
 // 危险命令黑名单
 var dangerousCmds = []string{"rm -rf", "dd if=", "mkfs", "reboot", "shutdown", "poweroff", "halt", ":(){", "chmod 777 /"}
 
+// 文件日志 writer
+var fileLogger *log.Logger
+var logFile *os.File
+
+func init() {
+	// 打开 agent.log 文件日志（追加模式）
+	logDir := "."
+	if ld := os.Getenv("LOG_DIR"); ld != "" {
+		logDir = ld
+	}
+	logPath := filepath.Join(logDir, "agent.log")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 无法打开日志文件 %s: %v\n", logPath, err)
+		return
+	}
+	logFile = f
+	// 同时输出到控制台和文件
+	fileLogger = log.New(io.MultiWriter(os.Stdout, f), "", log.LstdFlags)
+}
+
+func logf(format string, args ...interface{}) {
+	if fileLogger != nil {
+		fileLogger.Printf(format, args...)
+	} else {
+		fmt.Printf(format+"\n", args...)
+	}
+}
+
 func main() {
 	cfg := Config{
 		AgentID:       getEnv("AGENT_ID", "agent-001"),
@@ -43,14 +74,14 @@ func main() {
 		FlushInterval: 10 * time.Second,
 	}
 
-	fmt.Printf("=== LCA Agent 启动 ===\n")
-	fmt.Printf("Agent ID : %s\n", cfg.AgentID)
-	fmt.Printf("Admin    : %s\n", cfg.AdminURL)
-	fmt.Printf("推送间隔 : %v\n", cfg.FlushInterval)
-	fmt.Println("======================")
+	logf("=== 麒麟安全运维 Agent 启动 ===")
+	logf("Agent ID : %s", cfg.AgentID)
+	logf("Admin    : %s", cfg.AdminURL)
+	logf("推送间隔 : %v", cfg.FlushInterval)
+	logf("日志文件 : agent.log")
 
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	ticker := time.NewTicker(cfg.FlushInterval)
 	defer ticker.Stop()
@@ -58,7 +89,9 @@ func main() {
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
 
+	// 第一次心跳 + 任务拉取快速触发
 	go heartbeat(cfg)
+	go checkTasks(cfg)
 	collectAndPush(cfg)
 
 	for {
@@ -69,7 +102,10 @@ func main() {
 			go heartbeat(cfg)
 			go checkTasks(cfg)
 		case <-sig:
-			fmt.Println("\nAgent 安全退出")
+			logf("收到退出信号，Agent 安全退出")
+			if logFile != nil {
+				logFile.Close()
+			}
 			return
 		}
 	}
@@ -89,12 +125,11 @@ func collectAndPush(cfg Config) {
 
 	resp, err := http.Post(cfg.AdminURL+"/api/monitor/push", "application/json", bytes.NewReader(data))
 	if err != nil {
-		fmt.Printf("[推送失败] %v\n", err)
+		logf("[推送失败] %v", err)
 		return
 	}
 	resp.Body.Close()
-	fmt.Printf("[%s] CPU:%.1f%% MEM:%.1f%% DISK:%.1f%% LOAD:%.2f TCP:%d\n",
-		time.Now().Format("15:04:05"),
+	logf("CPU:%.1f%% MEM:%.1f%% DISK:%.1f%% LOAD:%.2f TCP:%d",
 		m.CPUPercent, m.MemPercent, m.DiskPercent, m.Load1m, m.TCPConnections)
 }
 
@@ -244,11 +279,11 @@ func heartbeat(cfg Config) {
 	})
 	resp, err := http.Post(cfg.AdminURL+"/api/agent/heartbeat", "application/json", bytes.NewReader(body))
 	if err != nil {
-		fmt.Printf("心跳失败: %v\n", err)
+		logf("心跳失败: %v", err)
 		return
 	}
 	resp.Body.Close()
-	fmt.Println("心跳 - OK")
+	logf("心跳 - OK")
 }
 
 // ========== 命令执行 ==========
@@ -273,8 +308,8 @@ func checkTasks(cfg Config) {
 	json.Unmarshal(raw, &result)
 
 	for _, task := range result.Data {
-		fmt.Printf("===== 执行任务 #%d =====\n", task.ID)
-		fmt.Printf("命令: %s\n", task.Command)
+		logf("===== 执行任务 #%d =====", task.ID)
+		logf("命令: %s", task.Command)
 
 		if !isSafe(task.Command) {
 			reportResult(cfg, task.ID, "", "危险命令被 Agent 拦截", -1, 0)
@@ -285,9 +320,9 @@ func checkTasks(cfg Config) {
 		stdout, stderr, exitCode := runCmd(task.Command)
 		duration := time.Since(startTime).Milliseconds()
 
-		fmt.Printf("stdout: %s\n", truncate(stdout, 200))
-		fmt.Printf("stderr: %s\n", truncate(stderr, 200))
-		fmt.Printf("exit  : %d 耗时: %dms\n", exitCode, duration)
+		logf("stdout: %s", truncate(stdout, 200))
+		logf("stderr: %s", truncate(stderr, 200))
+		logf("exit  : %d 耗时: %dms", exitCode, duration)
 
 		reportResult(cfg, task.ID, stdout, stderr, exitCode, duration)
 	}
@@ -298,7 +333,6 @@ func runCmd(cmdStr string) (stdout, stderr string, exitCode int) {
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
-
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	err := cmd.Run()
@@ -325,10 +359,11 @@ func reportResult(cfg Config, taskID uint, stdout, stderr string, exitCode int, 
 	})
 	resp, err := http.Post(cfg.AdminURL+"/api/agent/task-result", "application/json", bytes.NewReader(body))
 	if err != nil {
-		fmt.Printf("上报任务结果失败: %v\n", err)
+		logf("上报任务结果失败: %v", err)
 		return
 	}
 	resp.Body.Close()
+	logf("任务结果已上报")
 }
 
 func isSafe(cmd string) bool {
