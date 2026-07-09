@@ -6,7 +6,7 @@ import {
   CheckCircleOutlined,
   DesktopOutlined,
 } from '@ant-design/icons';
-import ReactEChartsCore from 'echarts-for-react/lib/core';
+import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts/core';
 import { GaugeChart } from 'echarts/charts';
 import { LineChart } from 'echarts/charts';
@@ -95,7 +95,7 @@ const GaugeCard: React.FC<GaugeCardProps> = ({
         boxShadow: level === 'danger' ? '0 2px 8px rgba(255,77,79,0.2)' : undefined,
       }}
     >
-      <ReactEChartsCore echarts={echarts} option={option} style={{ height: 180 }} />
+      <ReactECharts echarts={echarts} option={option} style={{ height: 180 }} />
       <div style={{ textAlign: 'center', marginTop: -8 }}>
         {level === 'danger' ? (
           <Tag color="error" icon={<WarningOutlined />}>异常</Tag>
@@ -264,7 +264,7 @@ const Dashboard: React.FC = () => {
         styles={{ body: { padding: '16px 0 0 0' } }}
       >
         {lineOption ? (
-          <ReactEChartsCore echarts={echarts} option={lineOption} style={{ height: 280 }} />
+          <ReactECharts echarts={echarts} option={lineOption} style={{ height: 280 }} />
         ) : (
           <div style={{ height: 280, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <Text type="secondary">{loading ? '加载中...' : '暂无历史数据'}</Text>
