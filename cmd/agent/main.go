@@ -396,4 +396,8 @@ func truncate(s string, n int) string {
 		s = strings.Join(lines, "\n") + "\n..."
 	}
 	if len(s) > n {
-		re
+		return s[:n] + "..."
+	}
+	return s
+}
+        
