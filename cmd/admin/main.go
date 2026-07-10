@@ -8,6 +8,10 @@ import (
 	"security-ops-agent/internal/service"
 	"time"
 
+	"net/http"
+	"os"
+	"path/filepath"
+
 	"github.com/glebarez/sqlite"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -36,18 +40,37 @@ func main() {
 	r.GET("/api/monitor/history", h.GetMetricHistory)
 	r.POST("/api/monitor/push", h.PushMetrics)
 	r.GET("/api/alerts", h.ListAlerts)
+	r.GET("/api/alerts/:id", h.GetAlert)
 	r.PUT("/api/alerts/:id/resolve", h.ResolveAlert)
 	r.POST("/api/agent/heartbeat", h.Heartbeat)
 	r.GET("/api/agent/tasks", h.PullTasks)
 	r.POST("/api/agent/task-result", h.ReportTaskResult)
+	r.GET("/api/agent/list", h.ListAgents)
 	r.GET("/api/skills", h.ListSkills)
 	r.POST("/api/skills/execute", h.ExecuteSkill)
 	r.GET("/api/skills/history", h.SkillHistory)
+	r.GET("/api/skills/task/:id", h.GetSkillTask)
 	r.POST("/api/ai/chat", h.Chat)
 	r.GET("/api/dashboard/stats", h.DashboardStats)
 
+	// 托管前端构建产物
+	serveStatic(r)
+
 	log.Println("admin 启动在", cfg.ListenAddr)
 	r.Run(cfg.ListenAddr)
+}
+
+func serveStatic(r *gin.Engine) {
+	exe, _ := os.Executable()
+	base := filepath.Join(filepath.Dir(exe), "..", "frontend", "dist")
+	r.StaticFS("/assets", http.Dir(filepath.Join(base, "assets")))
+	r.NoRoute(func(c *gin.Context) {
+		if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+			c.JSON(404, gin.H{"code": -1, "message": "not found"})
+			return
+		}
+		c.File(filepath.Join(base, "index.html"))
+	})
 }
 
 func cors() gin.HandlerFunc {

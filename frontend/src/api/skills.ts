@@ -50,12 +50,21 @@ export async function getSkillList(): Promise<SkillInfo[]> {
   }
 }
 
-/** 获取在线 Agent 列表 — ⚠️ 后端暂无此接口，用本地 fallback */
+/** 获取在线 Agent 列表 — GET /api/agent/list */
 export async function getAgentList(): Promise<AgentInfo[]> {
   try {
-    // 尝试从 /api/agent/tasks?agent_id=xxx 发现 Agent，但无直接列表接口
-    // 因此返回一个包含 "后端无此接口" 提示的空列表
-    console.warn('后端暂无 GET /api/agent/list 接口，Agent 列表为空');
+    const res = await request.get('/agent/list');
+    const body = (res as any);
+    const data = body?.data || body;
+    if (Array.isArray(data)) {
+      return data.map((a: any) => ({
+        id: a.agent_id,
+        hostname: a.agent_id,
+        ip: '-',
+        status: a.online ? 'online' : 'offline',
+        last_heartbeat: a.last_seen,
+      }));
+    }
     return [];
   } catch {
     return [];

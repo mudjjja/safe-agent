@@ -381,6 +381,65 @@ func (h *Handler) DashboardStats(c *gin.Context) {
 	}})
 }
 
+// ==================== Agent 列表 ====================
+
+type AgentRow struct {
+	AgentID  string `json:"agent_id"`
+	LastSeen string `json:"last_seen"`
+}
+
+func (h *Handler) ListAgents(c *gin.Context) {
+	var rows []AgentRow
+	h.db.Model(&model.Metric{}).
+		Select("agent_id, MAX(created_at) AS last_seen").
+		Group("agent_id").
+		Order("last_seen DESC").
+		Scan(&rows)
+
+	type AgentInfo struct {
+		AgentID  string    `json:"agent_id"`
+		LastSeen time.Time `json:"last_seen"`
+		Online   bool      `json:"online"`
+	}
+	agents := make([]AgentInfo, 0, len(rows))
+	for _, r := range rows {
+		t, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", r.LastSeen)
+		if err != nil {
+			t, _ = time.Parse("2006-01-02T15:04:05.999999999-07:00", r.LastSeen)
+		}
+		agents = append(agents, AgentInfo{
+			AgentID:  r.AgentID,
+			LastSeen: t,
+			Online:   time.Since(t) < 2*time.Minute,
+		})
+	}
+	c.JSON(200, gin.H{"code": 0, "data": agents})
+}
+
+// ==================== 单条告警 ====================
+
+func (h *Handler) GetAlert(c *gin.Context) {
+	id := c.Param("id")
+	var alert model.Alert
+	if err := h.db.First(&alert, id).Error; err != nil {
+		c.JSON(404, gin.H{"code": -1, "message": "告警不存在"})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "data": alert})
+}
+
+// ==================== 按 ID 查任务结果 ====================
+
+func (h *Handler) GetSkillTask(c *gin.Context) {
+	id := c.Param("id")
+	var exec model.SkillExecution
+	if err := h.db.First(&exec, id).Error; err != nil {
+		c.JSON(404, gin.H{"code": -1, "message": "任务不存在"})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "data": exec})
+}
+
 func replaceVar(s, key, val string) string {
 	return strings.ReplaceAll(s, "{{"+key+"}}", val)
 }

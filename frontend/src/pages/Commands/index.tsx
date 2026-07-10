@@ -176,8 +176,7 @@ const CommandsPage: React.FC = () => {
                 loading={loading}
                 options={agents.map((a) => ({
                   value: a.id,
-                  label: `${a.hostname} (${a.ip})`,
-                  disabled: a.status !== 'online',
+                  label: `${a.hostname} (${a.ip}) [${a.status === 'online' ? '在线' : '离线'}]`,
                 }))}
                 showSearch
                 optionFilterProp="label"

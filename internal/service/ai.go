@@ -100,6 +100,11 @@ func (s *AIService) StreamChat(history []ChatMessage, onChunk func(delta string)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AI API 错误 (%d): %s", resp.StatusCode, string(errBody))
+	}
+
 	var fullContent strings.Builder
 	buf := make([]byte, 4096)
 	for {
@@ -148,6 +153,11 @@ func (s *AIService) chat(messages []ChatMessage) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AI API 错误 (%d): %s", resp.StatusCode, string(errBody))
+	}
 
 	var result struct {
 		Choices []struct {
