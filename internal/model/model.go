@@ -76,3 +76,22 @@ type AgentTask struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
+
+// LogStore 日志库
+type LogStore struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;not null" json:"name"`
+	Type      string    `json:"type"`   // 系统日志/Nginx/应用日志/安全日志
+	LogCount  int64     `json:"log_count"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// LogEntry 日志条目
+type LogEntry struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	AgentID   string    `gorm:"index" json:"agent_id"`
+	Store     string    `gorm:"index" json:"store"`
+	Content   string    `json:"content"`
+	Level     string    `gorm:"default:INFO" json:"level"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}

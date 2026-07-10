@@ -416,6 +416,83 @@ func (h *Handler) ListAgents(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": agents})
 }
 
+
+	// ==================== 日志管理 ====================
+
+	func (h *Handler) LogsPush(c *gin.Context) {
+		var req struct {
+			AgentID string   `json:"agent_id"`
+			Store   string   `json:"store"`
+			Lines   []string `json:"lines"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+			return
+		}
+
+		var store model.LogStore
+		h.db.Where("name = ?", req.Store).FirstOrCreate(&store, model.LogStore{
+			Name: req.Store,
+			Type: "系统",
+		})
+
+		for _, line := range req.Lines {
+			h.db.Create(&model.LogEntry{
+				AgentID:   req.AgentID,
+				Store:     req.Store,
+				Content:   line,
+				Level:     detectLevel(line),
+				CreatedAt: time.Now(),
+			})
+		}
+
+		var count int64
+		h.db.Model(&model.LogEntry{}).Where("store = ?", req.Store).Count(&count)
+		h.db.Model(&store).Update("log_count", count)
+
+		c.JSON(200, gin.H{"code": 0, "message": "ok"})
+	}
+
+	func (h *Handler) ListLogStores(c *gin.Context) {
+		var stores []model.LogStore
+		h.db.Order("created_at DESC").Find(&stores)
+		c.JSON(200, gin.H{"code": 0, "data": stores})
+	}
+
+	func (h *Handler) ListLogs(c *gin.Context) {
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+		store := c.Query("store")
+		keyword := c.Query("keyword")
+		level := c.Query("level")
+
+		var total int64
+		var entries []model.LogEntry
+		query := h.db.Model(&model.LogEntry{})
+		if store != "" {
+			query = query.Where("store = ?", store)
+		}
+		if keyword != "" {
+			query = query.Where("content LIKE ?", "%"+keyword+"%")
+		}
+		if level != "" {
+			query = query.Where("level = ?", level)
+		}
+		query.Count(&total)
+		query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&entries)
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": entries}})
+	}
+
+	func detectLevel(line string) string {
+		upper := strings.ToUpper(line)
+		if strings.Contains(upper, "ERROR") || strings.Contains(upper, "FAIL") || strings.Contains(upper, "CRIT") {
+			return "ERROR"
+		}
+		if strings.Contains(upper, "WARN") {
+			return "WARN"
+		}
+		return "INFO"
+	}
 // ==================== 单条告警 ====================
 
 func (h *Handler) GetAlert(c *gin.Context) {

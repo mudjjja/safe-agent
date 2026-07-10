@@ -38,12 +38,18 @@ type Config struct {
 // 危险命令黑名单
 var dangerousCmds = []string{"rm -rf", "dd if=", "mkfs", "reboot", "shutdown", "poweroff", "halt", ":(){", "chmod 777 /", "-delete", "-exec", "> /dev/sda"}
 
+// 系统日志路径列表（按优先级尝试）
+var syslogPaths = []string{
+	"/var/log/messages",
+	"/var/log/syslog",
+	"/var/log/system.log",
+}
+
 // 文件日志 writer
 var fileLogger *log.Logger
 var logFile *os.File
 
 func init() {
-	// 打开 agent.log 文件日志（追加模式）
 	logDir := "."
 	if ld := os.Getenv("LOG_DIR"); ld != "" {
 		logDir = ld
@@ -55,7 +61,6 @@ func init() {
 		return
 	}
 	logFile = f
-	// 同时输出到控制台和文件
 	fileLogger = log.New(io.MultiWriter(os.Stdout, f), "", log.LstdFlags)
 }
 
@@ -89,9 +94,13 @@ func main() {
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
 
-	// 第一次心跳 + 任务拉取快速触发
+	logTicker := time.NewTicker(60 * time.Second)
+	defer logTicker.Stop()
+
+	// 首次快速触发
 	go heartbeat(cfg)
 	go checkTasks(cfg)
+	go collectLogs(cfg)
 	collectAndPush(cfg)
 
 	for {
@@ -101,6 +110,8 @@ func main() {
 		case <-heartbeatTicker.C:
 			go heartbeat(cfg)
 			go checkTasks(cfg)
+		case <-logTicker.C:
+			go collectLogs(cfg)
 		case <-sig:
 			logf("收到退出信号，Agent 安全退出")
 			if logFile != nil {
@@ -131,6 +142,67 @@ func collectAndPush(cfg Config) {
 	resp.Body.Close()
 	logf("CPU:%.1f%% MEM:%.1f%% DISK:%.1f%% LOAD:%.2f TCP:%d",
 		m.CPUPercent, m.MemPercent, m.DiskPercent, m.Load1m, m.TCPConnections)
+}
+
+// ========== 日志采集 ==========
+
+func collectLogs(cfg Config) {
+	lines := readSyslog(100)
+	if len(lines) == 0 {
+		return
+	}
+
+	body := map[string]interface{}{
+		"agent_id": cfg.AgentID,
+		"store":    "系统日志",
+		"lines":    lines,
+	}
+	data, _ := json.Marshal(body)
+
+	resp, err := http.Post(cfg.AdminURL+"/api/logs/push", "application/json", bytes.NewReader(data))
+	if err != nil {
+		logf("[日志推送失败] %v", err)
+		return
+	}
+	resp.Body.Close()
+	logf("日志采集: %d 行", len(lines))
+}
+
+func readSyslog(maxLines int) []string {
+	// 优先读文件
+	for _, p := range syslogPaths {
+		if data, err := os.ReadFile(p); err == nil {
+			lines := strings.Split(string(data), "\n")
+			if len(lines) > maxLines {
+				lines = lines[len(lines)-maxLines:]
+			}
+			// 过滤空行
+			result := make([]string, 0, len(lines))
+			for _, l := range lines {
+				if strings.TrimSpace(l) != "" {
+					result = append(result, l)
+				}
+			}
+			return result
+		}
+	}
+	// 文件都不存在，尝试 journalctl
+	if _, err := exec.LookPath("journalctl"); err == nil {
+		cmd := exec.Command("journalctl", "--no-pager", "-n", fmt.Sprintf("%d", maxLines))
+		out, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(string(out), "\n")
+			result := make([]string, 0, len(lines))
+			for _, l := range lines {
+				if strings.TrimSpace(l) != "" {
+					result = append(result, l)
+				}
+			}
+			return result
+		}
+	}
+	logf("未找到系统日志文件，尝试的路径: %v", syslogPaths)
+	return nil
 }
 
 // ========== 指标采集（仅 Linux） ==========
@@ -400,4 +472,3 @@ func truncate(s string, n int) string {
 	}
 	return s
 }
-        

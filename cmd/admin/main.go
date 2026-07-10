@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		log.Fatal("数据库连接失败:", err)
 	}
-	db.AutoMigrate(&model.Metric{}, &model.Alert{}, &model.Skill{}, &model.SkillExecution{}, &model.AgentTask{})
+	db.AutoMigrate(&model.Metric{}, &model.Alert{}, &model.Skill{}, &model.SkillExecution{}, &model.AgentTask{}, &model.LogStore{}, &model.LogEntry{})
 
 	aiSvc := service.NewAIService(cfg)
 	checker := service.NewAlertChecker(db, aiSvc)
@@ -52,6 +52,9 @@ func main() {
 	r.GET("/api/skills/task/:id", h.GetSkillTask)
 	r.POST("/api/ai/chat", h.Chat)
 	r.GET("/api/dashboard/stats", h.DashboardStats)
+		r.POST("/api/logs/push", h.LogsPush)
+		r.GET("/api/log-stores", h.ListLogStores)
+		r.GET("/api/logs", h.ListLogs)
 
 	// 托管前端构建产物
 	serveStatic(r)
