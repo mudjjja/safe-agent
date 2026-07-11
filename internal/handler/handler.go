@@ -517,26 +517,6 @@ func (h *Handler) ListBackups(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": backups}})
 }
 
-func (h *Handle
-r) ListBackups(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-	agentID := c.Query("agent_id")
-	status := c.Query("status")
-
-	var total int64
-	var backups []model.Backup
-	query := h.db.Model(&model.Backup{})
-	if agentID != "" {
-		query = query.Where("agent_id = ?", agentID)
-	}
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	query.Count(&total)
-	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&backups)
-	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": backups}})
-}
 
 func (h *Handler) CreateBackup(c *gin.Context) {
 	var req struct {
