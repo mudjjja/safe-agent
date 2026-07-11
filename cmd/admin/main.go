@@ -64,8 +64,16 @@ func main() {
 }
 
 func serveStatic(r *gin.Engine) {
-	exe, _ := os.Executable()
-	base := filepath.Join(filepath.Dir(exe), "..", "frontend", "dist")
+	base := os.Getenv("STATIC_DIR")
+	if base == "" {
+		exe, _ := os.Executable()
+		// 生产: 二进制在 /opt/safe-agent/admin, 静态文件在 frontend/dist/
+		base = filepath.Join(filepath.Dir(exe), "frontend", "dist")
+		if _, err := os.Stat(base); os.IsNotExist(err) {
+			// 开发: 二进制在 build/admin, 静态文件在 ../frontend/dist
+			base = filepath.Join(filepath.Dir(exe), "..", "frontend", "dist")
+		}
+	}
 	r.StaticFS("/assets", http.Dir(filepath.Join(base, "assets")))
 	r.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
