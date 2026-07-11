@@ -4,12 +4,14 @@
 build:
 	go build -o bin/admin ./cmd/admin
 
-# 编译麒麟版 Agent（龙芯架构）
+# 编译麒麟版 Admin（龙芯架构）
 build-admin-loong64:
+	GOOS=linux GOARCH=loong64 go mod tidy
 	GOOS=linux GOARCH=loong64 go build -o bin/admin-loong64 ./cmd/admin
 
 # 编译麒麟版 Agent（龙芯架构）
 build-agent-loong64:
+	GOOS=linux GOARCH=loong64 go mod tidy
 	GOOS=linux GOARCH=loong64 go build -o bin/agent-loong64 ./cmd/agent
 
 # 编译本地 Agent（调试用）
