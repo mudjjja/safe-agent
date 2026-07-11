@@ -78,11 +78,11 @@ if $SKIP_BUILD; then
     warn "跳过编译 (--skip-build)"
 elif $FORCE_BUILD || [[ ! -f "build/admin" ]] || [[ ! -f "build/agent" ]]; then
     info "正在编译 admin..."
-    GOARCH="$GO_ARCH" go build -o build/admin ./cmd/admin/
+    CGO_ENABLED=0 GOARCH="$GO_ARCH" go build -o build/admin ./cmd/admin/
     pass "admin 编译完成"
 
     info "正在编译 agent..."
-    GOARCH="$GO_ARCH" go build -o build/agent ./cmd/agent/
+    CGO_ENABLED=0 GOARCH="$GO_ARCH" go build -o build/agent ./cmd/agent/
     pass "agent 编译完成"
 else
     pass "二进制已存在，跳过编译 (使用 --build 强制重新编译)"
@@ -245,5 +245,3 @@ echo "║    journalctl -u kylin-admin -f              "
 echo "║    journalctl -u kylin-agent -f              "
 echo "║    bash ${INSTALL_DIR}/simulate_attack.sh    "
 echo "╚══════════════════════════════════════════════╝"
-echo ""
-pass "部署成功"
