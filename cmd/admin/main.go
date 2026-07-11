@@ -12,7 +12,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/glebarez/sqlite"
+	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/ncruces/go-sqlite3/gormlite"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -20,11 +21,11 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := gorm.Open(sqlite.Open(cfg.DBPath), &gorm.Config{})
+	db, err := gorm.Open(gormlite.Open(cfg.DBPath), &gorm.Config{})
 	if err != nil {
 		log.Fatal("数据库连接失败:", err)
 	}
-	db.AutoMigrate(&model.Metric{}, &model.Alert{}, &model.Skill{}, &model.SkillExecution{}, &model.AgentTask{}, &model.LogStore{}, &model.LogEntry{})
+	db.AutoMigrate(&model.Metric{}, &model.Alert{}, &model.Skill{}, &model.SkillExecution{}, &model.AgentTask{}, &model.LogStore{}, &model.LogEntry{}, &model.Backup{}, &model.SysUser{}, &model.OperateLog{})
 
 	aiSvc := service.NewAIService(cfg)
 	checker := service.NewAlertChecker(db, aiSvc)
@@ -55,6 +56,15 @@ func main() {
 		r.POST("/api/logs/push", h.LogsPush)
 		r.GET("/api/log-stores", h.ListLogStores)
 		r.GET("/api/logs", h.ListLogs)
+	r.GET("/api/backups", h.ListBackups)
+	r.POST("/api/backups", h.CreateBackup)
+	r.DELETE("/api/backups/:id", h.DeleteBackup)
+	r.GET("/api/users", h.ListUsers)
+	r.POST("/api/users", h.CreateUser)
+	r.PUT("/api/users/:id", h.UpdateUser)
+	r.DELETE("/api/users/:id", h.DeleteUser)
+	r.GET("/api/operate-logs", h.ListOperateLogs)
+	r.GET("/api/analysis/trend", h.AnalysisTrend)
 
 	// 托管前端构建产物
 	serveStatic(r)
