@@ -95,3 +95,45 @@ type LogEntry struct {
 	Level     string    `gorm:"default:INFO" json:"level"`
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }
+
+
+// Backup 备份记录
+type Backup struct {
+	ID          uint       `gorm:"primaryKey" json:"id"`
+	AgentID     string     `gorm:"index" json:"agent_id"`
+	Name        string     `gorm:"not null" json:"name"`
+	Type        string     `gorm:"default:full" json:"type"` // full/incremental
+	FilePath    string     `json:"file_path"`
+	Size        int64      `json:"size"`
+	Status      string     `gorm:"default:pending" json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+
+// SysUser 系统用户
+type SysUser struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Username  string    `gorm:"uniqueIndex;not null" json:"username"`
+	Password  string    `gorm:"not null" json:"-"`
+	Role      string    `gorm:"default:user" json:"role"`
+	Email     string    `json:"email"`
+	Phone     string    `json:"phone"`
+	Status    string    `gorm:"default:active" json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// OperateLog 操作日志
+type OperateLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index" json:"user_id"`
+	Username  string    `json:"username"`
+	Action    string    `json:"action"`
+	Target    string    `json:"target"`
+	TargetID  string    `json:"target_id"`
+	Detail    string    `json:"detail"`
+	IP        string    `json:"ip"`
+	Status    string    `gorm:"default:success" json:"status"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}

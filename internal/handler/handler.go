@@ -27,7 +27,6 @@ func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker) *Han
 	return h
 }
 
-// seedData 初始化内置 Skills
 func (h *Handler) seedData() {
 	skills := []model.Skill{
 		{Name: "查看进程", Description: "列出 CPU 占用最高的 10 个进程", Command: "ps aux --sort=-%cpu | head -11", RiskLevel: "safe", Category: "系统"},
@@ -72,7 +71,6 @@ func (h *Handler) PushMetrics(c *gin.Context) {
 	rawBody, _ := c.GetRawData()
 	fmt.Printf("收到推送, body: %s\n", string(rawBody))
 
-	// 重新注入 body，因为 GetRawData 消耗掉了
 	c.Request.Body = io.NopCloser(strings.NewReader(string(rawBody)))
 
 	var req struct {
@@ -171,7 +169,6 @@ func (h *Handler) PullTasks(c *gin.Context) {
 	var tasks []model.AgentTask
 	h.db.Where("agent_id = ? AND status = 'pending'", agentID).Order("created_at ASC").Find(&tasks)
 
-	// 标记为 running
 	for _, t := range tasks {
 		now := time.Now()
 		h.db.Model(&t).Updates(map[string]interface{}{"status": "running", "started_at": now})
@@ -200,7 +197,6 @@ func (h *Handler) ReportTaskResult(c *gin.Context) {
 		"duration_ms": req.DurationMs,
 	})
 
-	// 同步更新 SkillExecution
 	var task model.AgentTask
 	h.db.First(&task, req.TaskID)
 	h.db.Model(&model.SkillExecution{}).Where("id = ?", task.ExecutionID).Updates(map[string]interface{}{
@@ -245,19 +241,16 @@ func (h *Handler) ExecuteSkill(c *gin.Context) {
 		return
 	}
 
-	// 危险技能必须填写理由
 	if (skill.RiskLevel == "high" || skill.RiskLevel == "dangerous") && req.Reason == "" {
 		c.JSON(400, gin.H{"code": -1, "message": "高危技能执行需填写操作理由"})
 		return
 	}
 
-	// 替换命令模板中的参数
 	cmd := skill.Command
 	for k, v := range req.Params {
 		cmd = replaceVar(cmd, k, v)
 	}
 
-	// 记录执行
 	execution := model.SkillExecution{
 		AgentID:   req.AgentID,
 		SkillID:   skill.ID,
@@ -269,7 +262,6 @@ func (h *Handler) ExecuteSkill(c *gin.Context) {
 	}
 	h.db.Create(&execution)
 
-	// 创建 Agent 任务
 	task := model.AgentTask{
 		AgentID:     req.AgentID,
 		ExecutionID: execution.ID,
@@ -313,7 +305,6 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 
-	// 构建系统提示词
 	systemMsg := service.ChatMessage{
 		Role: "system",
 		Content: `你是麒麟 Linux 安全运维 AI 助手。你可以：
@@ -336,7 +327,6 @@ func (h *Handler) Chat(c *gin.Context) {
 	}
 	history = append(history, service.ChatMessage{Role: "user", Content: req.Message})
 
-	// SSE 流式返回
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -360,7 +350,6 @@ func (h *Handler) Chat(c *gin.Context) {
 	fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 	flusher.Flush()
 
-	// 记录对话
 	_ = fullContent
 }
 
@@ -416,83 +405,72 @@ func (h *Handler) ListAgents(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": agents})
 }
 
+// ==================== 日志管理 ====================
 
-	// ==================== 日志管理 ====================
+func (h *Handler) LogsPush(c *gin.Context) {
+	var req struct {
+		AgentID string   `json:"agent_id"`
+		Store   string   `json:"store"`
+		Lines   []string `json:"lines"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
 
-	func (h *Handler) LogsPush(c *gin.Context) {
-		var req struct {
-			AgentID string   `json:"agent_id"`
-			Store   string   `json:"store"`
-			Lines   []string `json:"lines"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
-			return
-		}
+	var store model.LogStore
+	h.db.Where("name = ?", req.Store).FirstOrCreate(&store, model.LogStore{
+		Name: req.Store,
+		Type: "系统",
+	})
 
-		var store model.LogStore
-		h.db.Where("name = ?", req.Store).FirstOrCreate(&store, model.LogStore{
-			Name: req.Store,
-			Type: "系统",
+	for _, line := range req.Lines {
+		h.db.Create(&model.LogEntry{
+			AgentID:   req.AgentID,
+			Store:     req.Store,
+			Content:   line,
+			Level:     detectLevel(line),
+			CreatedAt: time.Now(),
 		})
-
-		for _, line := range req.Lines {
-			h.db.Create(&model.LogEntry{
-				AgentID:   req.AgentID,
-				Store:     req.Store,
-				Content:   line,
-				Level:     detectLevel(line),
-				CreatedAt: time.Now(),
-			})
-		}
-
-		var count int64
-		h.db.Model(&model.LogEntry{}).Where("store = ?", req.Store).Count(&count)
-		h.db.Model(&store).Update("log_count", count)
-
-		c.JSON(200, gin.H{"code": 0, "message": "ok"})
 	}
 
-	func (h *Handler) ListLogStores(c *gin.Context) {
-		var stores []model.LogStore
-		h.db.Order("created_at DESC").Find(&stores)
-		c.JSON(200, gin.H{"code": 0, "data": stores})
-	}
+	var count int64
+	h.db.Model(&model.LogEntry{}).Where("store = ?", req.Store).Count(&count)
+	h.db.Model(&store).Update("log_count", count)
 
-	func (h *Handler) ListLogs(c *gin.Context) {
-		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-		size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-		store := c.Query("store")
-		keyword := c.Query("keyword")
-		level := c.Query("level")
+	c.JSON(200, gin.H{"code": 0, "message": "ok"})
+}
 
-		var total int64
-		var entries []model.LogEntry
-		query := h.db.Model(&model.LogEntry{})
-		if store != "" {
-			query = query.Where("store = ?", store)
-		}
-		if keyword != "" {
-			query = query.Where("content LIKE ?", "%"+keyword+"%")
-		}
-		if level != "" {
-			query = query.Where("level = ?", level)
-		}
-		query.Count(&total)
-		query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&entries)
-		c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": entries}})
-	}
+func (h *Handler) ListLogStores(c *gin.Context) {
+	var stores []model.LogStore
+	h.db.Order("created_at DESC").Find(&stores)
+	c.JSON(200, gin.H{"code": 0, "data": stores})
+}
 
-	func detectLevel(line string) string {
-		upper := strings.ToUpper(line)
-		if strings.Contains(upper, "ERROR") || strings.Contains(upper, "FAIL") || strings.Contains(upper, "CRIT") {
-			return "ERROR"
-		}
-		if strings.Contains(upper, "WARN") {
-			return "WARN"
-		}
-		return "INFO"
+func (h *Handler) ListLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	store := c.Query("store")
+	keyword := c.Query("keyword")
+	level := c.Query("level")
+
+	var total int64
+	var entries []model.LogEntry
+	query := h.db.Model(&model.LogEntry{})
+	if store != "" {
+		query = query.Where("store = ?", store)
 	}
+	if keyword != "" {
+		query = query.Where("content LIKE ?", "%"+keyword+"%")
+	}
+	if level != "" {
+		query = query.Where("level = ?", level)
+	}
+	query.Count(&total)
+	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&entries)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": entries}})
+}
+
 // ==================== 单条告警 ====================
 
 func (h *Handler) GetAlert(c *gin.Context) {
@@ -515,6 +493,280 @@ func (h *Handler) GetSkillTask(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"code": 0, "data": exec})
+}
+
+// ==================== 备份管理 ====================
+
+func (h *Handler) ListBackups(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	agentID := c.Query("agent_id")
+	status := c.Query("status")
+
+	var total int64
+	var backups []model.Backup
+	query := h.db.Model(&model.Backup{})
+	if agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	query.Count(&total)
+	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&backups)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": backups}})
+}
+
+
+func (h *Handler) CreateBackup(c *gin.Context) {
+	var req struct {
+		AgentID  string `json:"agent_id"`
+		Name     string `json:"name"`
+		Type     string `json:"type"`
+		FilePath string `json:"file_path"`
+		Size     int64  `json:"size"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+	if req.AgentID == "" || req.Name == "" {
+		c.JSON(400, gin.H{"code": -1, "message": "agent_id 和 name 不能为空"})
+		return
+	}
+	backupType := req.Type
+	if backupType == "" {
+		backupType = "full"
+	}
+	b := model.Backup{
+		AgentID:   req.AgentID,
+		Name:      req.Name,
+		Type:      backupType,
+		FilePath:  req.FilePath,
+		Size:      req.Size,
+		Status:    "success",
+		CreatedAt: time.Now(),
+	}
+	h.db.Create(&b)
+	c.JSON(200, gin.H{"code": 0, "data": b, "message": "备份记录已创建"})
+}
+
+func (h *Handler) DeleteBackup(c *gin.Context) {
+	id := c.Param("id")
+	result := h.db.Delete(&model.Backup{}, id)
+	if result.RowsAffected == 0 {
+		c.JSON(404, gin.H{"code": -1, "message": "备份记录不存在"})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "message": "已删除"})
+}
+
+// ==================== 系统用户管理 ====================
+
+func (h *Handler) ListUsers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	role := c.Query("role")
+	status := c.Query("status")
+
+	var total int64
+	var users []model.SysUser
+	query := h.db.Model(&model.SysUser{})
+	if role != "" {
+		query = query.Where("role = ?", role)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	query.Count(&total)
+	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&users)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": users}})
+}
+
+func (h *Handler) CreateUser(c *gin.Context) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+	if req.Username == "" || req.Password == "" {
+		c.JSON(400, gin.H{"code": -1, "message": "用户名和密码不能为空"})
+		return
+	}
+	userRole := req.Role
+	if userRole == "" {
+		userRole = "user"
+	}
+	u := model.SysUser{
+		Username:  req.Username,
+		Password:  req.Password,
+		Role:      userRole,
+		Email:     req.Email,
+		Phone:     req.Phone,
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	h.db.Create(&u)
+	h.logOperate(0, req.Username, "create", "user", fmt.Sprintf("%d", u.ID), "创建用户: "+req.Username)
+	c.JSON(200, gin.H{"code": 0, "data": u, "message": "用户已创建"})
+}
+
+func (h *Handler) UpdateUser(c *gin.Context) {
+	id := c.Param("id")
+	var user model.SysUser
+	if err := h.db.First(&user, id).Error; err != nil {
+		c.JSON(404, gin.H{"code": -1, "message": "用户不存在"})
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+		Role     string `json:"role"`
+		Email    string `json:"email"`
+		Phone    string `json:"phone"`
+		Status   string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
+		return
+	}
+	updates := map[string]interface{}{"updated_at": time.Now()}
+	if req.Password != "" {
+		updates["password"] = req.Password
+	}
+	if req.Role != "" {
+		updates["role"] = req.Role
+	}
+	if req.Email != "" {
+		updates["email"] = req.Email
+	}
+	if req.Phone != "" {
+		updates["phone"] = req.Phone
+	}
+	if req.Status != "" {
+		updates["status"] = req.Status
+	}
+	h.db.Model(&user).Updates(updates)
+	h.logOperate(0, user.Username, "update", "user", id, "更新用户: "+user.Username)
+	c.JSON(200, gin.H{"code": 0, "message": "用户已更新"})
+}
+
+func (h *Handler) DeleteUser(c *gin.Context) {
+	id := c.Param("id")
+	var user model.SysUser
+	if err := h.db.First(&user, id).Error; err != nil {
+		c.JSON(404, gin.H{"code": -1, "message": "用户不存在"})
+		return
+	}
+	h.db.Delete(&user)
+	h.logOperate(0, user.Username, "delete", "user", id, "删除用户: "+user.Username)
+	c.JSON(200, gin.H{"code": 0, "message": "已删除"})
+}
+
+// ==================== 操作日志 ====================
+
+func (h *Handler) ListOperateLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	action := c.Query("action")
+	username := c.Query("username")
+
+	var total int64
+	var logs []model.OperateLog
+	query := h.db.Model(&model.OperateLog{})
+	if action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if username != "" {
+		query = query.Where("username = ?", username)
+	}
+	query.Count(&total)
+	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&logs)
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": logs}})
+}
+
+// ==================== 数据分析统计 ====================
+
+func (h *Handler) AnalysisTrend(c *gin.Context) {
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
+	store := c.Query("store")
+
+	type DailyCount struct {
+		Date  string `json:"date"`
+		Count int64  `json:"count"`
+	}
+	var logTrend []DailyCount
+	logQuery := h.db.Model(&model.LogEntry{}).
+		Select("DATE(created_at) AS date, COUNT(*) AS count").
+		Where("created_at > ?", time.Now().AddDate(0, 0, -days)).
+		Group("DATE(created_at)").
+		Order("date ASC")
+	if store != "" {
+		logQuery = logQuery.Where("store = ?", store)
+	}
+	logQuery.Scan(&logTrend)
+
+	type SeverityCount struct {
+		Severity string `json:"severity"`
+		Count    int64  `json:"count"`
+	}
+	var alertStats []SeverityCount
+	h.db.Model(&model.Alert{}).
+		Select("severity, COUNT(*) AS count").
+		Group("severity").
+		Scan(&alertStats)
+
+	type StatusCount struct {
+		Status string `json:"status"`
+		Count  int64  `json:"count"`
+	}
+	var alertStatus []StatusCount
+	h.db.Model(&model.Alert{}).
+		Select("status, COUNT(*) AS count").
+		Group("status").
+		Scan(&alertStatus)
+
+	var agentMetrics int64
+	h.db.Model(&model.Metric{}).Where("created_at > ?", time.Now().AddDate(0, 0, -1)).Count(&agentMetrics)
+
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{
+		"log_trend":     logTrend,
+		"alert_stats":   alertStats,
+		"alert_status":  alertStatus,
+		"agent_metrics": agentMetrics,
+	}})
+}
+
+// ==================== 内部辅助方法 ====================
+
+func (h *Handler) logOperate(userID uint, username, action, target, targetID, detail string) {
+	h.db.Create(&model.OperateLog{
+		UserID:    userID,
+		Username:  username,
+		Action:    action,
+		Target:    target,
+		TargetID:  targetID,
+		Detail:    detail,
+		Status:    "success",
+		CreatedAt: time.Now(),
+	})
+}
+
+func detectLevel(line string) string {
+	upper := strings.ToUpper(line)
+	if strings.Contains(upper, "ERROR") || strings.Contains(upper, "FAIL") || strings.Contains(upper, "CRIT") {
+		return "ERROR"
+	}
+	if strings.Contains(upper, "WARN") {
+		return "WARN"
+	}
+	return "INFO"
 }
 
 func replaceVar(s, key, val string) string {
