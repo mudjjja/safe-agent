@@ -8,6 +8,10 @@ import {
   ThunderboltOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
+  TeamOutlined,
+  DatabaseOutlined,
+  FolderOpenOutlined,
+  BarChartOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -31,6 +35,10 @@ const Layout: React.FC = () => {
     { key: '/alerts', icon: <BellOutlined />, label: '告警列表' },
     { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
     { key: '/commands', icon: <ThunderboltOutlined />, label: '命令执行' },
+    { key: '/users', icon: <TeamOutlined />, label: '用户管理' },
+    { key: '/backups', icon: <DatabaseOutlined />, label: '备份管理' },
+    { key: '/logs', icon: <FolderOpenOutlined />, label: '日志存储' },
+    { key: '/analysis', icon: <BarChartOutlined />, label: '分析看板' },
   ];
 
   const handleLogout = () => {
