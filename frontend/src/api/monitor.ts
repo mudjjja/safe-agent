@@ -19,13 +19,18 @@ export interface HistoryPoint {
 }
 
 /** 获取最新指标 */
-export async function getLatestMetrics(): Promise<MetricsData> {
+export async function getLatestMetrics(): Promise<MetricsData | null> {
   const res = await request.get('/monitor/latest');
-  return (res as any)?.data || res;
+  const body = (res as any);
+  const data = body?.data || body;
+  return data && typeof data === 'object' && 'cpu_percent' in data ? data : null;
 }
 
 /** 获取历史曲线数据 */
 export async function getHistoryMetrics(minutes = 60): Promise<HistoryPoint[]> {
   const res = await request.get('/monitor/history', { params: { minutes } });
-  return (res as any)?.data || res || [];
+  const body = (res as any);
+  const data = body?.data || body;
+  // 后端返回 { code:0, data: { total, list: [...] } }，提取 list 数组
+  return data?.list || (Array.isArray(data) ? data : []);
 }
