@@ -9,6 +9,10 @@ import ChatPage from './pages/Chat';
 import AlertsPage from './pages/Alerts';
 import AuditLogPage from './pages/AuditLog';
 import CommandsPage from './pages/Commands';
+import UsersPage from './pages/Users';
+import BackupsPage from './pages/Backups';
+import LogsPage from './pages/Logs';
+import AnalysisPage from './pages/Analysis';
 
 /** 路由守卫：未登录跳转登录页 */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -40,6 +44,10 @@ function AppRoutes() {
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="audit" element={<AuditLogPage />} />
         <Route path="commands" element={<CommandsPage />} />
+        <Route path="users" element={<UsersPage />} />
+        <Route path="backups" element={<BackupsPage />} />
+        <Route path="logs" element={<LogsPage />} />
+        <Route path="analysis" element={<AnalysisPage />} />
       </Route>
 
       {/* 404 兜底 */}
