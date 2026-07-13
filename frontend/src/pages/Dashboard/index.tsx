@@ -1,10 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Card, Row, Col, Typography, Spin, Alert, Statistic, Tag, Space } from 'antd';
+import { Card, Row, Col, Typography, Spin, Alert, Statistic, Tag, Space, Select } from 'antd';
 import {
   ReloadOutlined,
   WarningOutlined,
   CheckCircleOutlined,
   DesktopOutlined,
+  FileTextOutlined,
+  BellOutlined,
+  RiseOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import * as echarts from 'echarts/core';
@@ -17,7 +21,8 @@ import {
   LegendComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import { getLatestMetrics, getHistoryMetrics, type MetricsData, type HistoryPoint } from '../../api/monitor';
+import { getLatestMetrics, getHistoryMetrics, fetchAgentList, type MetricsData, type HistoryPoint } from '../../api/monitor';
+import { getDashboardStats, type DashboardStats } from '../../api/dashboard';
 
 echarts.use([GaugeChart, LineChart, TooltipComponent, GridComponent, TitleComponent, LegendComponent, CanvasRenderer]);
 
@@ -115,16 +120,31 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState('');
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [agents, setAgents] = useState<string[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string>('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = async (agentId?: string) => {
     try {
-      const [metrics, hist] = await Promise.all([
-        getLatestMetrics(),
-        getHistoryMetrics(60),
+      const agentList = await fetchAgentList();
+      let targetAgent = agentId;
+      if (agentList.length > 0) {
+        setAgents(agentList);
+        if (!targetAgent) {
+          targetAgent = agentList[0];
+          setSelectedAgent(agentList[0]);
+        }
+      }
+
+      const [metrics, hist, dashboardStats] = await Promise.all([
+        getLatestMetrics(targetAgent || undefined),
+        getHistoryMetrics(60, targetAgent || undefined),
+        getDashboardStats(),
       ]);
       setLatest(metrics);
       setHistory(hist);
+      setStats(dashboardStats);
       setLastUpdate(new Date().toLocaleTimeString());
       setError('');
     } catch (err: any) {
@@ -134,9 +154,16 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const handleAgentChange = (agentId: string) => {
+    setSelectedAgent(agentId);
+    fetchData(agentId);
+  };
+
   useEffect(() => {
-    fetchData();
-    intervalRef.current = setInterval(fetchData, 5000);
+    fetchData(selectedAgent || undefined);
+    intervalRef.current = setInterval(() => {
+      fetchData(selectedAgent || undefined);
+    }, 5000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
@@ -181,7 +208,7 @@ const Dashboard: React.FC = () => {
         name: '内存',
         type: 'line' as const,
         smooth: true,
-        data: history.map((p) => p.memory_percent),
+        data: history.map((p) => p.mem_percent),
         lineStyle: { width: 2 },
         itemStyle: { color: '#52c41a' },
         areaStyle: { color: 'rgba(82,196,26,0.1)' },
@@ -206,6 +233,16 @@ const Dashboard: React.FC = () => {
           系统监控仪表盘
         </Title>
         <Space size="small">
+          {agents.length > 0 && (
+            <Select
+              value={selectedAgent || undefined}
+              onChange={handleAgentChange}
+              style={{ width: 180 }}
+              size="small"
+              placeholder="选择 Agent"
+              options={agents.map(a => ({ value: a, label: a }))}
+            />
+          )}
           {lastUpdate && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               <ReloadOutlined style={{ marginRight: 4 }} />
@@ -220,13 +257,61 @@ const Dashboard: React.FC = () => {
         <Alert message={error} type="error" showIcon style={{ marginBottom: 16 }} />
       )}
 
+      {/* 4 个统计卡片 */}
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}>
+          <Card size="small" hoverable>
+            <Statistic
+              title="日志总量"
+              value={stats?.total_metrics ?? 0}
+              prefix={<FileTextOutlined style={{ color: '#1890ff' }} />}
+              valueStyle={{ color: '#1890ff' }}
+              suffix="条"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" hoverable>
+            <Statistic
+              title="今日采集"
+              value={stats?.today_metrics ?? 0}
+              prefix={<RiseOutlined style={{ color: '#52c41a' }} />}
+              valueStyle={{ color: '#52c41a' }}
+              suffix="条"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" hoverable>
+            <Statistic
+              title="待处理告警"
+              value={stats?.open_alerts ?? 0}
+              prefix={<BellOutlined style={{ color: '#ff4d4f' }} />}
+              valueStyle={{ color: '#ff4d4f' }}
+              suffix="条"
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card size="small" hoverable>
+            <Statistic
+              title="Agent 在线"
+              value={agents.length}
+              prefix={<TeamOutlined style={{ color: '#722ed1' }} />}
+              valueStyle={{ color: '#722ed1' }}
+              suffix="台"
+            />
+          </Card>
+        </Col>
+      </Row>
+
       {/* 4 个环形仪表盘 */}
       <Row gutter={[16, 16]}>
         <Col xs={12} sm={12} md={6}>
           <GaugeCard title="CPU" value={latest?.cpu_percent ?? 0} threshold={CPU_THRESHOLD} />
         </Col>
         <Col xs={12} sm={12} md={6}>
-          <GaugeCard title="内存" value={latest?.memory_percent ?? 0} threshold={MEM_THRESHOLD} />
+          <GaugeCard title="内存" value={latest?.mem_percent ?? 0} threshold={MEM_THRESHOLD} />
         </Col>
         <Col xs={12} sm={12} md={6}>
           <GaugeCard title="磁盘" value={latest?.disk_percent ?? 0} threshold={DISK_THRESHOLD} />
@@ -235,7 +320,7 @@ const Dashboard: React.FC = () => {
           <Card
             hoverable
             style={{ borderRadius: 10, height: '100%' }}
-            bodyStyle={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 210 }}
+            styles={{ body: { display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 210 } }}
           >
             <Statistic
               title="网络接收"
@@ -271,6 +356,16 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {!latest && !loading && !error && (
+        <Alert
+          message="暂无监控数据"
+          description="请确保 Agent 已启动并正在推送数据。在麒麟服务器上执行：export AGENT_ID=kylin-agent-01 && export ADMIN_URL=http://localhost:8080 && ./agent"
+          type="info"
+          showIcon
+          style={{ marginTop: 16 }}
+        />
+      )}
     </div>
   );
 };

@@ -1,14 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Card, Progress, Typography, Space, List, Empty } from 'antd';
 import {
   DesktopOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
-  WarningOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons';
-import { getMockSystemStatus, getMockAuditLogs } from '../api/mock';
-import type { SystemStatus, AuditRecord } from '../api/mock';
+import { getLatestMetrics } from '../api/monitor';
+import { getOperateLogs } from '../api/operate-logs';
 
 const { Text } = Typography;
 
@@ -17,59 +15,57 @@ interface StatusPanelProps {
 }
 
 const StatusPanel: React.FC<StatusPanelProps> = ({ latestAction: _latestAction }) => {
-  const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [logs, setLogs] = useState<AuditRecord[]>([]);
+  const [metrics, setMetrics] = useState<{ cpu: number; mem: number; disk: number } | null>(null);
+  const [recentOps, setRecentOps] = useState<any[]>([]);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    setStatus(getMockSystemStatus());
-    setLogs(getMockAuditLogs().slice(0, 10));
-    const timer = setInterval(() => setStatus(getMockSystemStatus()), 5000);
-    return () => clearInterval(timer);
+    const fetchData = async () => {
+      try {
+        const [m, ops] = await Promise.all([
+          getLatestMetrics(),
+          getOperateLogs({ page: 1, size: 10 }),
+        ]);
+        if (m) {
+          setMetrics({ cpu: Math.round(m.cpu_percent), mem: Math.round(m.mem_percent), disk: Math.round(m.disk_percent) });
+        }
+        if (ops?.list) {
+          setRecentOps(ops.list);
+        }
+      } catch { /* noop */ }
+    };
+    fetchData();
+    intervalRef.current = setInterval(fetchData, 15000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, []);
-
-  const getStatusIcon = (record: AuditRecord) => {
-    if (record.status === 'passed') return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
-    if (record.status === 'blocked') return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
-    return <WarningOutlined style={{ color: '#faad14' }} />;
-  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* 系统状态 */}
       <Card
         size="small"
-        title={<span><DesktopOutlined /> 系统状态</span>}
+        title={<span><DesktopOutlined /> 实时状态</span>}
         styles={{ body: { padding: 12 } }}
       >
-        {status ? (
+        {metrics ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>主机</Text>
-              <div><Text strong>{status.host}</Text></div>
-            </div>
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>操作系统</Text>
-              <div><Text strong>{status.os}</Text></div>
-            </div>
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>运行时间</Text>
-              <div><Text strong>{status.uptime}</Text></div>
-            </div>
-            <div>
               <Text type="secondary" style={{ fontSize: 12 }}>CPU</Text>
-              <Progress percent={status.cpu} size="small" status={status.cpu > 80 ? 'exception' : 'normal'} />
+              <Progress percent={metrics.cpu} size="small" status={metrics.cpu > 80 ? 'exception' : 'normal'} />
             </div>
             <div>
               <Text type="secondary" style={{ fontSize: 12 }}>内存</Text>
-              <Progress percent={status.memory} size="small" status={status.memory > 80 ? 'exception' : 'normal'} />
+              <Progress percent={metrics.mem} size="small" status={metrics.mem > 80 ? 'exception' : 'normal'} />
             </div>
             <div>
               <Text type="secondary" style={{ fontSize: 12 }}>磁盘</Text>
-              <Progress percent={status.disk} size="small" status={status.disk > 85 ? 'exception' : 'normal'} />
+              <Progress percent={metrics.disk} size="small" status={metrics.disk > 85 ? 'exception' : 'normal'} />
             </div>
           </div>
         ) : (
-          <Text type="secondary">加载中...</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>等待 Agent 数据...</Text>
         )}
       </Card>
 
@@ -81,12 +77,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({ latestAction: _latestAction }
       >
         <List
           size="small"
-          dataSource={logs}
+          dataSource={recentOps}
           locale={{ emptyText: <Empty description="暂无操作记录" /> }}
-          renderItem={(record) => (
+          renderItem={(record: any) => (
             <List.Item style={{ padding: '6px 12px' }}>
               <Space size={4}>
-                {getStatusIcon(record)}
+                <CheckCircleOutlined style={{ color: '#52c41a' }} />
                 <Text
                   style={{
                     fontSize: 12,
@@ -97,10 +93,12 @@ const StatusPanel: React.FC<StatusPanelProps> = ({ latestAction: _latestAction }
                     display: 'inline-block',
                   }}
                 >
-                  {record.command}
+                  {record.detail || record.action || '-'}
                 </Text>
               </Space>
-              <Text type="secondary" style={{ fontSize: 11 }}>{record.timestamp.slice(11, 16)}</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {record.created_at ? new Date(record.created_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}
+              </Text>
             </List.Item>
           )}
         />

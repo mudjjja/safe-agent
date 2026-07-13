@@ -13,6 +13,8 @@ import UsersPage from './pages/Users';
 import BackupsPage from './pages/Backups';
 import LogsPage from './pages/Logs';
 import AnalysisPage from './pages/Analysis';
+import AgentDetail from './pages/AgentDetail';
+import LogStoresPage from './pages/LogStores';
 
 /** 路由守卫：未登录跳转登录页 */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -48,6 +50,8 @@ function AppRoutes() {
         <Route path="backups" element={<BackupsPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="analysis" element={<AnalysisPage />} />
+        <Route path="agent/:id" element={<AgentDetail />} />
+        <Route path="log-stores" element={<LogStoresPage />} />
       </Route>
 
       {/* 404 兜底 */}

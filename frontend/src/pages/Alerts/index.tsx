@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   Card, Table, Tag, Typography, Badge, Space, Alert, Empty,
-  Spin, Button, Row, Col, Statistic,
+  Spin, Button, Row, Col, Statistic, Select, message,
 } from 'antd';
 import {
   BellOutlined,
@@ -11,10 +11,11 @@ import {
   ReloadOutlined,
   InfoCircleOutlined,
   RobotOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { getAlerts, type AlertItem } from '../../api/alerts';
+import { getAlerts, resolveAlert, type AlertItem } from '../../api/alerts';
 
 const { Title, Text } = Typography;
 
@@ -38,7 +39,9 @@ const AlertsPage: React.FC = () => {
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
-  const [severityFilter] = useState<string | undefined>();
+  const [severityFilter, setSeverityFilter] = useState<string | undefined>();
+  const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [resolving, setResolving] = useState<number | null>(null);
 
   const fetchAlerts = useCallback(async (p = page) => {
     setLoading(true);
@@ -48,6 +51,7 @@ const AlertsPage: React.FC = () => {
         page: p,
         size: 20,
         severity: severityFilter,
+        status: statusFilter,
       });
       setAlerts(result.data || []);
       setTotal(result.total || 0);
@@ -56,13 +60,26 @@ const AlertsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, severityFilter]);
+  }, [page, severityFilter, statusFilter]);
 
   useEffect(() => {
     fetchAlerts();
     const timer = setInterval(() => fetchAlerts(), 15000);
     return () => clearInterval(timer);
-  }, [page, severityFilter]);
+  }, [page, severityFilter, statusFilter]);
+
+  const handleResolve = async (id: number) => {
+    setResolving(id);
+    try {
+      await resolveAlert(id);
+      message.success('告警已解决');
+      fetchAlerts();
+    } catch {
+      message.error('解决告警失败');
+    } finally {
+      setResolving(null);
+    }
+  };
 
   const pendingCount = alerts.filter((a) => a.status === 'pending').length;
 
@@ -124,6 +141,23 @@ const AlertsPage: React.FC = () => {
         return <Badge status={cfg.color as any} text={cfg.label} />;
       },
     },
+    {
+      title: '操作',
+      key: 'action',
+      width: 80,
+      render: (_: any, record: AlertItem) =>
+        record.status === 'pending' ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<CheckOutlined />}
+            loading={resolving === record.id}
+            onClick={() => handleResolve(record.id)}
+          >
+            解决
+          </Button>
+        ) : null,
+    },
   ];
 
   /** 是否已 AI 分析：有 summary 字段就算 */
@@ -138,6 +172,32 @@ const AlertsPage: React.FC = () => {
           告警列表
         </Title>
         <Space>
+          {/* 级别筛选 */}
+          <Select
+            allowClear
+            placeholder="级别筛选"
+            style={{ width: 120 }}
+            value={severityFilter}
+            onChange={(v) => { setSeverityFilter(v); setPage(1); }}
+            options={[
+              { value: 'critical', label: '严重' },
+              { value: 'high', label: '高' },
+              { value: 'medium', label: '中' },
+              { value: 'low', label: '低' },
+            ]}
+          />
+          {/* 状态筛选 */}
+          <Select
+            allowClear
+            placeholder="状态筛选"
+            style={{ width: 120 }}
+            value={statusFilter}
+            onChange={(v) => { setStatusFilter(v); setPage(1); }}
+            options={[
+              { value: 'open', label: '待处理' },
+              { value: 'resolved', label: '已解决' },
+            ]}
+          />
           {pendingCount > 0 && (
             <Tag color="red" style={{ fontSize: 13 }}>
               待处理: {pendingCount} 条

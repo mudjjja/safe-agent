@@ -28,6 +28,11 @@ func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker) *Han
 }
 
 func (h *Handler) seedData() {
+	h.seedSkills()
+	h.seedDefaultUser()
+}
+
+func (h *Handler) seedSkills() {
 	skills := []model.Skill{
 		{Name: "查看进程", Description: "列出 CPU 占用最高的 10 个进程", Command: "ps aux --sort=-%cpu | head -11", RiskLevel: "safe", Category: "系统"},
 		{Name: "查看磁盘使用", Description: "查看各分区磁盘使用情况", Command: "df -h", RiskLevel: "safe", Category: "系统"},
@@ -45,6 +50,30 @@ func (h *Handler) seedData() {
 	for _, s := range skills {
 		h.db.Where("name = ?", s.Name).FirstOrCreate(&s)
 	}
+}
+
+func (h *Handler) seedDefaultUser() {
+	var count int64
+	h.db.Model(&model.SysUser{}).Count(&count)
+	if count > 0 {
+		return
+	}
+	h.db.Create(&model.SysUser{
+		Username:  "admin",
+		Password:  "admin123",
+		Role:      "admin",
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
+	h.db.Create(&model.SysUser{
+		Username:  "user",
+		Password:  "user123",
+		Role:      "user",
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	})
 }
 
 // ==================== 登录 ====================
@@ -121,8 +150,11 @@ func (h *Handler) GetMetricHistory(c *gin.Context) {
 	minutes, _ := strconv.Atoi(c.DefaultQuery("minutes", "60"))
 
 	var metrics []model.Metric
-	h.db.Where("agent_id = ? AND created_at > ?", agentID, time.Now().Add(-time.Duration(minutes)*time.Minute)).
-		Order("created_at ASC").Find(&metrics)
+	query := h.db.Where("created_at > ?", time.Now().Add(-time.Duration(minutes)*time.Minute))
+	if agentID != "" {
+		query = query.Where("agent_id = ?", agentID)
+	}
+	query.Order("created_at ASC").Find(&metrics)
 	c.JSON(200, gin.H{"code": 0, "data": metrics})
 }
 
@@ -356,17 +388,26 @@ func (h *Handler) Chat(c *gin.Context) {
 // ==================== Dashboard ====================
 
 func (h *Handler) DashboardStats(c *gin.Context) {
-	var totalMetrics, totalAlerts, openAlerts, todayMetrics int64
+	var totalMetrics, totalAlerts, openAlerts, todayMetrics, agentOnline int64
 	h.db.Model(&model.Metric{}).Count(&totalMetrics)
 	h.db.Model(&model.Alert{}).Count(&totalAlerts)
 	h.db.Model(&model.Alert{}).Where("status = 'open'").Count(&openAlerts)
 	h.db.Model(&model.Metric{}).Where("created_at > ?", time.Now().Truncate(24*time.Hour)).Count(&todayMetrics)
+
+	// Agent 在线数：2 分钟内有心跳的
+	var recentAgents []string
+	h.db.Model(&model.Metric{}).
+		Select("DISTINCT agent_id").
+		Where("created_at > ?", time.Now().Add(-2*time.Minute)).
+		Pluck("agent_id", &recentAgents)
+	agentOnline = int64(len(recentAgents))
 
 	c.JSON(200, gin.H{"code": 0, "data": gin.H{
 		"total_metrics": totalMetrics,
 		"total_alerts":  totalAlerts,
 		"open_alerts":   openAlerts,
 		"today_metrics": todayMetrics,
+		"agent_online":  agentOnline,
 	}})
 }
 
