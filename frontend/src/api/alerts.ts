@@ -69,6 +69,11 @@ export async function getAlerts(params?: AlertListParams): Promise<AlertListResu
   };
 }
 
+/** 解决告警 */
+export async function resolveAlert(id: number): Promise<void> {
+  await request.put(`/alerts/${id}/resolve`);
+}
+
 /** 将后端 Alert 字段归一化为前端 AlertItem */
 export function normalizeAlert(item: any): AlertItem {
   return {

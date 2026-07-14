@@ -88,6 +88,34 @@ export async function executeCommand(params: ExecuteCommandParams): Promise<Exec
   };
 }
 
+export interface HistoryRecord {
+  id: number;
+  skill_name: string;
+  agent_id: string;
+  status: string;
+  command: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+  duration_ms?: number;
+  created_at: string;
+}
+
+/** 获取执行历史列表 */
+export async function getSkillHistory(page = 1, size = 20): Promise<{ list: HistoryRecord[]; total: number }> {
+  try {
+    const res = await request.get('/skills/history', { params: { page, size } });
+    const body = res as any;
+    const data = body?.data || body;
+    return {
+      list: data?.list || [],
+      total: data?.total || 0,
+    };
+  } catch {
+    return { list: [], total: 0 };
+  }
+}
+
 /** 查询任务执行状态 — ⚠️ 后端无单任务查询接口，用 /skills/history 兜底 */
 export async function getTaskResult(taskId: string): Promise<ExecuteResult> {
   try {

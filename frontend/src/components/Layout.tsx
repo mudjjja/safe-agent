@@ -8,6 +8,10 @@ import {
   ThunderboltOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
+  TeamOutlined,
+  DatabaseOutlined,
+  FolderOpenOutlined,
+  BarChartOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -31,6 +35,16 @@ const Layout: React.FC = () => {
     { key: '/alerts', icon: <BellOutlined />, label: '告警列表' },
     { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
     { key: '/commands', icon: <ThunderboltOutlined />, label: '命令执行' },
+    { key: '/users', icon: <TeamOutlined />, label: '用户管理' },
+    { key: '/backups', icon: <DatabaseOutlined />, label: '备份管理' },
+    {
+      key: 'log-group', icon: <FolderOpenOutlined />, label: '日志管理',
+      children: [
+        { key: '/logs', icon: <FileTextOutlined />, label: '日志查询' },
+        { key: '/log-stores', icon: <DatabaseOutlined />, label: '日志库' },
+      ],
+    },
+    { key: '/analysis', icon: <BarChartOutlined />, label: '分析看板' },
   ];
 
   const handleLogout = () => {
@@ -134,7 +148,18 @@ const Layout: React.FC = () => {
           }}
         >
           <Text style={{ fontSize: 15, fontWeight: 500 }}>
-            {menuItems.find((m) => m.key === location.pathname)?.label || '麒麟安全运维'}
+            {(() => {
+              const top = menuItems.find((m) => m.key === location.pathname);
+              if (top) return top.label;
+              // 查找子菜单
+              for (const item of menuItems) {
+                if ((item as any).children) {
+                  const child = (item as any).children.find((c: any) => c.key === location.pathname);
+                  if (child) return child.label;
+                }
+              }
+              return '麒麟安全运维';
+            })()}
           </Text>
 
           <Space>

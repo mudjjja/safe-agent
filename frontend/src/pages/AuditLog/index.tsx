@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { Table, Tag, Typography, Card, Statistic, Row, Col, Select } from 'antd';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Table, Tag, Typography, Card, Statistic, Row, Col, Select, Button, Space } from 'antd';
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   WarningOutlined,
   SafetyCertificateOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
-import type { AuditRecord } from '../../api/mock';
+import type { AuditRecord } from '../../api/audit';
 import { getAuditLogs } from '../../api/audit';
 
 const { Title, Text } = Typography;
@@ -17,13 +18,21 @@ const AuditLogPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    getAuditLogs().then((data) => {
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await getAuditLogs();
       setLogs(data);
       setFilteredLogs(data);
-      setLoading(false);
-    });
+    } catch { /* handled */ }
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    fetchData();
+    const timer = setInterval(fetchData, 30000);
+    return () => clearInterval(timer);
+  }, [fetchData]);
 
   useEffect(() => {
     if (statusFilter === 'all') {
@@ -113,16 +122,21 @@ const AuditLogPage: React.FC = () => {
           <SafetyCertificateOutlined style={{ marginRight: 8 }} />
           安全审计日志
         </Title>
-        <Select
-          value={statusFilter}
-          onChange={setStatusFilter}
-          style={{ width: 140 }}
-          options={[
-            { value: 'all', label: '全部记录' },
-            { value: 'passed', label: '仅通过' },
-            { value: 'blocked', label: '仅拦截' },
-          ]}
-        />
+        <Space>
+          <Select
+            value={statusFilter}
+            onChange={setStatusFilter}
+            style={{ width: 140 }}
+            options={[
+              { value: 'all', label: '全部记录' },
+              { value: 'passed', label: '仅通过' },
+              { value: 'blocked', label: '仅拦截' },
+            ]}
+          />
+          <Button size="small" icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+            刷新
+          </Button>
+        </Space>
       </div>
 
       {/* 统计卡片 */}

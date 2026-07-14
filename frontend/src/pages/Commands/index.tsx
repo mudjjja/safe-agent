@@ -17,9 +17,11 @@ import {
   getSkillList,
   executeCommand,
   getTaskResult,
+  getSkillHistory,
   type AgentInfo,
   type SkillInfo,
   type ExecuteResult,
+  type HistoryRecord,
 } from '../../api/skills';
 
 const { Title, Text } = Typography;
@@ -42,14 +44,25 @@ const CommandsPage: React.FC = () => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [agentList, skillList] = await Promise.all([
+      const [agentList, skillList, history] = await Promise.all([
         getAgentList(),
         getSkillList(),
+        getSkillHistory(1, 20),
       ]);
       setAgents(agentList || []);
       setSkills(skillList || []);
+      if (history.list.length > 0) {
+        setCmdHistory(
+          history.list.map((h: HistoryRecord) => ({
+            time: h.created_at ? new Date(h.created_at).toLocaleTimeString() : '-',
+            skill: h.skill_name,
+            agent: h.agent_id,
+            status: h.status === 'success' ? 'success' : h.status === 'failed' ? 'failed' : 'pending',
+          }))
+        );
+      }
     } catch (err: any) {
-      if (!agents.length) setError(err?.message || '获取 Agent/Skill 列表失败');
+      if (!agents.length) setError(err?.message || '获取数据失败');
     } finally {
       setLoading(false);
     }
@@ -96,20 +109,28 @@ const CommandsPage: React.FC = () => {
       });
       setResult(res);
 
-      // 如果有 task_id 但没执行完，轮询结果
-      if (res.task_id && (res.status === 'pending' || res.status === 'running')) {
-        pollTaskResult(String(res.task_id));
-      }
-
       // 记录历史
-      setCmdHistory((prev) => [{
+      const historyEntry = {
         time: new Date().toLocaleTimeString(),
         skill: skill_name,
         agent: agent_id,
-        status: res.status || 'pending',
-      }, ...prev].slice(0, 20));
+        status: 'pending',
+      };
+      setCmdHistory((prev) => [historyEntry, ...prev].slice(0, 20));
 
       message.success('命令已下发');
+
+      // 如果有 task_id 但没执行完，轮询结果
+      if (res.task_id && (res.status === 'pending' || res.status === 'running')) {
+        pollTaskResult(String(res.task_id), () => {
+          setCmdHistory((prev) => {
+            const updated = [...prev];
+            const idx = updated.findIndex((h) => h.time === historyEntry.time && h.skill === historyEntry.skill);
+            if (idx >= 0) updated[idx] = { ...updated[idx], status: 'success' };
+            return updated;
+          });
+        });
+      }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || '命令执行失败');
       message.error('命令下发失败');
@@ -119,14 +140,18 @@ const CommandsPage: React.FC = () => {
     }
   };
 
-  const pollTaskResult = async (taskId: string) => {
+  const pollTaskResult = async (taskId: string, onDone?: () => void) => {
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       try {
         const res = await getTaskResult(taskId);
         setResult(res);
-        if (res.status === 'success' || res.status === 'failed') break;
+        if (res.status === 'success' || res.status === 'failed') {
+          onDone?.();
+          break;
+        }
       } catch {
+        onDone?.();
         break;
       }
     }
@@ -187,19 +212,38 @@ const CommandsPage: React.FC = () => {
               name="skill_name"
               label="执行 Skill"
               rules={[{ required: true, message: '请选择 Skill' }]}
-              style={{ minWidth: 220 }}
+              style={{ minWidth: 260 }}
             >
               <Select
                 placeholder="选择 Skill"
                 loading={loading}
-                options={skills.map((s) => ({
-                  value: s.name,
-                  label: s.name,
-                  description: s.description,
-                }))}
                 showSearch
                 optionFilterProp="label"
-              />
+              >
+                {(() => {
+                  const groups: Record<string, typeof skills> = {};
+                  skills.forEach((s) => {
+                    const cat = s.category || '其他';
+                    if (!groups[cat]) groups[cat] = [];
+                    groups[cat].push(s);
+                  });
+                  return Object.entries(groups).map(([category, items]) => (
+                    <Select.OptGroup key={category} label={category}>
+                      {items.map((s) => (
+                        <Select.Option key={s.name} value={s.name} label={s.name}>
+                          <Space size={4}>
+                            <span>{s.name}</span>
+                            <Text type="secondary" style={{ fontSize: 11 }}>{s.description}</Text>
+                            {isHighRisk(s.name) && (
+                              <Tag color="error" style={{ fontSize: 10, lineHeight: '16px' }}>高风险</Tag>
+                            )}
+                          </Space>
+                        </Select.Option>
+                      ))}
+                    </Select.OptGroup>
+                  ));
+                })()}
+              </Select>
             </Form.Item>
 
             <Form.Item
