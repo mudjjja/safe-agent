@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +29,7 @@ type Handler struct {
 func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker, pluginsDir string) *Handler {
 	h := &Handler{db: db, ai: ai, checker: checker, pluginsDir: pluginsDir}
 	h.loadPlugins()
+	h.seedAdmin()
 	return h
 }
 
@@ -84,11 +87,51 @@ func (h *Handler) Login(c *gin.Context) {
 		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
 		return
 	}
-	if req.Username == "admin" && req.Password == "admin123" {
-		c.JSON(200, gin.H{"code": 0, "data": gin.H{"token": "mock-jwt-token-admin-2024"}})
+
+	var user model.SysUser
+	if err := h.db.Where("username = ? AND status = 'active'", req.Username).First(&user).Error; err != nil {
+		c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
 		return
 	}
-	c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
+
+	if user.Password != hashPassword(req.Password) {
+		c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
+		return
+	}
+
+	token := "token-" + user.Username + "-" + time.Now().Format("20060102")
+	c.JSON(200, gin.H{"code": 0, "data": gin.H{
+		"token":    token,
+		"username": user.Username,
+		"role":     user.Role,
+	}})
+}
+
+func (h *Handler) seedAdmin() {
+	var count int64
+	h.db.Model(&model.SysUser{}).Where("username = ?", "admin").Count(&count)
+	if count == 0 {
+		h.db.Create(&model.SysUser{
+			Username: "admin",
+			Password: hashPassword("admin123"),
+			Role:     "admin",
+			Status:   "active",
+		})
+	}
+	h.db.Model(&model.SysUser{}).Where("username = ?", "operator").Count(&count)
+	if count == 0 {
+		h.db.Create(&model.SysUser{
+			Username: "operator",
+			Password: hashPassword("operator123"),
+			Role:     "operator",
+			Status:   "active",
+		})
+	}
+}
+
+func hashPassword(pwd string) string {
+	h := sha256.Sum256([]byte(pwd))
+	return hex.EncodeToString(h[:])
 }
 
 // ==================== 监控数据 ====================
@@ -631,7 +674,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	}
 	u := model.SysUser{
 		Username:  req.Username,
-		Password:  req.Password,
+		Password:  hashPassword(req.Password),
 		Role:      userRole,
 		Email:     req.Email,
 		Phone:     req.Phone,
@@ -664,7 +707,7 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	}
 	updates := map[string]interface{}{"updated_at": time.Now()}
 	if req.Password != "" {
-		updates["password"] = req.Password
+		updates["password"] = hashPassword(req.Password)
 	}
 	if req.Role != "" {
 		updates["role"] = req.Role
