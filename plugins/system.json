@@ -1,0 +1,46 @@
+[
+  {
+    "name": "查看进程",
+    "description": "列出 CPU 占用最高的 10 个进程",
+    "command": "ps aux --sort=-%cpu | head -11",
+    "risk_level": "safe",
+    "category": "系统"
+  },
+  {
+    "name": "查看磁盘使用",
+    "description": "查看各分区磁盘使用情况",
+    "command": "df -h",
+    "risk_level": "safe",
+    "category": "系统"
+  },
+  {
+    "name": "查看内存使用",
+    "description": "查看内存和 Swap 使用情况",
+    "command": "free -h",
+    "risk_level": "safe",
+    "category": "系统"
+  },
+  {
+    "name": "查看系统负载",
+    "description": "查看系统 1/5/15 分钟平均负载",
+    "command": "uptime",
+    "risk_level": "safe",
+    "category": "系统"
+  },
+  {
+    "name": "重启服务",
+    "description": "重启指定的 systemd 服务",
+    "command": "systemctl restart {{ServiceName}}",
+    "risk_level": "high",
+    "params": ["ServiceName"],
+    "category": "系统"
+  },
+  {
+    "name": "清理旧日志",
+    "description": "删除指定目录下 7 天前的 .log 文件",
+    "command": "find {{Path}} -name '*.log' -mtime +7 -delete",
+    "risk_level": "dangerous",
+    "params": ["Path"],
+    "category": "系统"
+  }
+]

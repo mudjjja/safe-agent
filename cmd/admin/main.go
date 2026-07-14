@@ -31,7 +31,7 @@ func main() {
 	checker := service.NewAlertChecker(db, aiSvc)
 	go checker.Run(30 * time.Second)
 
-	h := handler.New(db, aiSvc, checker)
+	h := handler.New(db, aiSvc, checker, cfg.PluginsDir)
 
 	r := gin.Default()
 	r.Use(cors())

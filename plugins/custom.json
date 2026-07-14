@@ -1,0 +1,12 @@
+[
+  {
+    "_comment": "在此文件中添加自定义运维技能，启动时自动加载",
+    "_example": {
+      "name": "查看Nginx日志",
+      "description": "查看 Nginx 错误日志最后 20 行",
+      "command": "tail -20 /var/log/nginx/error.log",
+      "risk_level": "safe",
+      "category": "自定义"
+    }
+  }
+]

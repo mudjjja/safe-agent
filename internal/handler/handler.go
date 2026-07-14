@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"security-ops-agent/internal/model"
 	"security-ops-agent/internal/service"
 	"strconv"
@@ -16,19 +18,21 @@ import (
 )
 
 type Handler struct {
-	db      *gorm.DB
-	ai      *service.AIService
-	checker *service.AlertChecker
+	db         *gorm.DB
+	ai         *service.AIService
+	checker    *service.AlertChecker
+	pluginsDir string
 }
 
-func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker) *Handler {
-	h := &Handler{db: db, ai: ai, checker: checker}
-	h.seedData()
+func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker, pluginsDir string) *Handler {
+	h := &Handler{db: db, ai: ai, checker: checker, pluginsDir: pluginsDir}
+	h.loadPlugins()
 	return h
 }
 
-func (h *Handler) seedData() {
-	skills := []model.Skill{
+// loadPlugins 从 plugins 目录加载 JSON 技能文件
+func (h *Handler) loadPlugins() {
+	defaults := []model.Skill{
 		{Name: "查看进程", Description: "列出 CPU 占用最高的 10 个进程", Command: "ps aux --sort=-%cpu | head -11", RiskLevel: "safe", Category: "系统"},
 		{Name: "查看磁盘使用", Description: "查看各分区磁盘使用情况", Command: "df -h", RiskLevel: "safe", Category: "系统"},
 		{Name: "查看内存使用", Description: "查看内存和 Swap 使用情况", Command: "free -h", RiskLevel: "safe", Category: "系统"},
@@ -42,8 +46,30 @@ func (h *Handler) seedData() {
 		{Name: "查看SSH失败", Description: "查看 SSH 登录失败的记录", Command: "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -20 || journalctl -u sshd --no-pager -n 20 2>/dev/null | grep -i failed", RiskLevel: "safe", Category: "安全"},
 		{Name: "清理旧日志", Description: "删除指定目录下 7 天前的 .log 文件", Command: "find {{Path}} -name '*.log' -mtime +7 -delete", RiskLevel: "dangerous", Params: `["Path"]`, Category: "系统"},
 	}
-	for _, s := range skills {
-		h.db.Where("name = ?", s.Name).FirstOrCreate(&s)
+
+	files, err := filepath.Glob(filepath.Join(h.pluginsDir, "*.json"))
+	if err != nil || len(files) == 0 {
+		for _, s := range defaults {
+			h.db.Where("name = ?", s.Name).FirstOrCreate(&s)
+		}
+		return
+	}
+
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var skills []model.Skill
+		if err := json.Unmarshal(data, &skills); err != nil {
+			continue
+		}
+		for _, s := range skills {
+			if s.Name == "" {
+				continue
+			}
+			h.db.Where("name = ?", s.Name).FirstOrCreate(&s)
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 type Config struct {
 	ListenAddr string
 	DBPath     string
+	PluginsDir string
 	LLM        LLMConfig
 	JWTSecret  string
 }
@@ -25,6 +26,7 @@ func Load() *Config {
 	return &Config{
 		ListenAddr: getEnv("LISTEN_ADDR", ":8080"),
 		DBPath:     resolvePath(getEnv("DB_PATH", "data/agent.db")),
+		PluginsDir: resolvePath(getEnv("PLUGINS_DIR", "plugins")),
 		JWTSecret:  getEnv("JWT_SECRET", "security-ops-2024"),
 		LLM: LLMConfig{
 			Provider:    getEnv("LLM_PROVIDER", "deepseek"),

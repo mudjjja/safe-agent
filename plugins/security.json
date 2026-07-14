@@ -1,0 +1,32 @@
+[
+  {
+    "name": "封禁IP",
+    "description": "使用 iptables 封禁指定 IP",
+    "command": "iptables -A INPUT -s {{IP}} -j DROP",
+    "risk_level": "high",
+    "params": ["IP"],
+    "category": "安全"
+  },
+  {
+    "name": "解封IP",
+    "description": "解除 iptables 对指定 IP 的封禁",
+    "command": "iptables -D INPUT -s {{IP}} -j DROP",
+    "risk_level": "high",
+    "params": ["IP"],
+    "category": "安全"
+  },
+  {
+    "name": "查看最近登录",
+    "description": "查看最近 20 条系统登录记录",
+    "command": "last -20",
+    "risk_level": "safe",
+    "category": "安全"
+  },
+  {
+    "name": "查看SSH失败",
+    "description": "查看 SSH 登录失败的记录",
+    "command": "grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -20 || journalctl -u sshd --no-pager -n 20 2>/dev/null | grep -i failed",
+    "risk_level": "safe",
+    "category": "安全"
+  }
+]
