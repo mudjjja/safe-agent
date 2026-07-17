@@ -29,6 +29,11 @@ func (c *AlertChecker) Run(interval time.Duration) {
 }
 
 func (c *AlertChecker) check() {
+	c.checkMetrics()
+	c.checkSSHBruteForce()
+}
+
+func (c *AlertChecker) checkMetrics() {
 	// 查每个 Agent 最近 2 分钟的最新指标
 	var latest []model.Metric
 	c.db.Raw(`
@@ -93,6 +98,50 @@ func (c *AlertChecker) check() {
 			alert.Suggestion = suggestion
 		}
 
+		c.db.Create(&alert)
+	}
+}
+
+func (c *AlertChecker) checkSSHBruteForce() {
+	// 查询最近 2 分钟内每个 agent 的 SSH 失败次数
+	type SSHCount struct {
+		AgentID string
+		Count   int64
+	}
+	var counts []SSHCount
+	c.db.Raw(`
+		SELECT agent_id, COUNT(*) AS count FROM log_entries
+		WHERE created_at > ? AND (content LIKE '%Failed password%' OR content LIKE '%Failed password for%')
+		GROUP BY agent_id
+	`, time.Now().Add(-2*time.Minute)).Scan(&counts)
+
+	for _, c2 := range counts {
+		if c2.Count < 15 {
+			continue
+		}
+
+		// 防重复
+		var existing model.Alert
+		if err := c.db.Where("agent_id = ? AND status = 'open' AND trigger_reason LIKE '%SSH%' AND created_at > ?",
+			c2.AgentID, time.Now().Add(-5*time.Minute)).First(&existing).Error; err == nil {
+			continue
+		}
+
+		reason := fmt.Sprintf("SSH暴力破解嫌疑: %d次失败登录/2分钟", c2.Count)
+		metricsStr := fmt.Sprintf("SSH失败登录次数: %d (2分钟内)", c2.Count)
+		summary, rootCause, suggestion, err := c.ai.AnalyzeAlert(reason, metricsStr)
+
+		alert := model.Alert{
+			AgentID:       c2.AgentID,
+			Title:         reason,
+			Severity:      "high",
+			TriggerReason: reason,
+		}
+		if err == nil {
+			alert.Summary = summary
+			alert.RootCause = rootCause
+			alert.Suggestion = suggestion
+		}
 		c.db.Create(&alert)
 	}
 }
