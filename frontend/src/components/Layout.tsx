@@ -8,7 +8,6 @@ import {
   ThunderboltOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
-  TeamOutlined,
   DatabaseOutlined,
   FolderOpenOutlined,
   BarChartOutlined,
@@ -35,7 +34,6 @@ const Layout: React.FC = () => {
     { key: '/alerts', icon: <BellOutlined />, label: '告警列表' },
     { key: '/audit', icon: <FileTextOutlined />, label: '审计日志' },
     { key: '/commands', icon: <ThunderboltOutlined />, label: '命令执行' },
-    { key: '/users', icon: <TeamOutlined />, label: '用户管理' },
     { key: '/backups', icon: <DatabaseOutlined />, label: '备份管理' },
     {
       key: 'log-group', icon: <FolderOpenOutlined />, label: '日志管理',

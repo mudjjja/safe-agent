@@ -86,6 +86,7 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	if req.Username == "admin" && req.Password == "admin123" {
+		h.logOperate("admin", "login", "system", "", "管理员登录")
 		c.JSON(200, gin.H{"code": 0, "data": gin.H{"token": "mock-jwt-token-admin-2024"}})
 		return
 	}
@@ -177,6 +178,7 @@ func (h *Handler) ResolveAlert(c *gin.Context) {
 	h.db.Model(&model.Alert{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"status": "resolved", "resolved_at": now,
 	})
+	h.logOperate("admin", "resolve_alert", "alert", id, "处理告警 #"+id)
 	c.JSON(200, gin.H{"code": 0, "message": "ok"})
 }
 
@@ -297,6 +299,8 @@ func (h *Handler) ExecuteSkill(c *gin.Context) {
 		CreatedAt:   time.Now(),
 	}
 	h.db.Create(&task)
+
+	h.logOperate("admin", "execute_skill", "skill", skill.Name, "执行技能: "+skill.Name+" 命令: "+cmd)
 
 	c.JSON(200, gin.H{"code": 0, "data": gin.H{
 		"execution_id": execution.ID,
@@ -575,6 +579,7 @@ func (h *Handler) CreateBackup(c *gin.Context) {
 		CreatedAt: time.Now(),
 	}
 	h.db.Create(&b)
+	h.logOperate("admin", "create_backup", "backup", req.Name, "创建备份: "+req.Name)
 	c.JSON(200, gin.H{"code": 0, "data": b, "message": "备份记录已创建"})
 }
 
@@ -585,6 +590,7 @@ func (h *Handler) DeleteBackup(c *gin.Context) {
 		c.JSON(404, gin.H{"code": -1, "message": "备份记录不存在"})
 		return
 	}
+	h.logOperate("admin", "delete_backup", "backup", id, "删除备份 #"+id)
 	c.JSON(200, gin.H{"code": 0, "message": "已删除"})
 }
 
@@ -660,6 +666,18 @@ func (h *Handler) AnalysisTrend(c *gin.Context) {
 		"alert_status":  alertStatus,
 		"agent_metrics": agentMetrics,
 	}})
+}
+
+func (h *Handler) logOperate(username, action, target, targetID, detail string) {
+	h.db.Create(&model.OperateLog{
+		Username:  username,
+		Action:    action,
+		Target:    target,
+		TargetID:  targetID,
+		Detail:    detail,
+		Status:    "success",
+		CreatedAt: time.Now(),
+	})
 }
 
 func detectLevel(line string) string {
