@@ -59,10 +59,6 @@ func main() {
 	r.GET("/api/backups", h.ListBackups)
 	r.POST("/api/backups", h.CreateBackup)
 	r.DELETE("/api/backups/:id", h.DeleteBackup)
-	r.GET("/api/users", h.ListUsers)
-	r.POST("/api/users", h.CreateUser)
-	r.PUT("/api/users/:id", h.UpdateUser)
-	r.DELETE("/api/users/:id", h.DeleteUser)
 	r.GET("/api/operate-logs", h.ListOperateLogs)
 	r.GET("/api/analysis/trend", h.AnalysisTrend)
 

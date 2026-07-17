@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,7 +27,6 @@ type Handler struct {
 func New(db *gorm.DB, ai *service.AIService, checker *service.AlertChecker, pluginsDir string) *Handler {
 	h := &Handler{db: db, ai: ai, checker: checker, pluginsDir: pluginsDir}
 	h.loadPlugins()
-	h.seedAdmin()
 	return h
 }
 
@@ -88,50 +85,11 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	var user model.SysUser
-	if err := h.db.Where("username = ? AND status = 'active'", req.Username).First(&user).Error; err != nil {
-		c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
+	if req.Username == "admin" && req.Password == "admin123" {
+		c.JSON(200, gin.H{"code": 0, "data": gin.H{"token": "mock-jwt-token-admin-2024"}})
 		return
 	}
-
-	if user.Password != hashPassword(req.Password) {
-		c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
-		return
-	}
-
-	token := "token-" + user.Username + "-" + time.Now().Format("20060102")
-	c.JSON(200, gin.H{"code": 0, "data": gin.H{
-		"token":    token,
-		"username": user.Username,
-		"role":     user.Role,
-	}})
-}
-
-func (h *Handler) seedAdmin() {
-	var count int64
-	h.db.Model(&model.SysUser{}).Where("username = ?", "admin").Count(&count)
-	if count == 0 {
-		h.db.Create(&model.SysUser{
-			Username: "admin",
-			Password: hashPassword("admin123"),
-			Role:     "admin",
-			Status:   "active",
-		})
-	}
-	h.db.Model(&model.SysUser{}).Where("username = ?", "operator").Count(&count)
-	if count == 0 {
-		h.db.Create(&model.SysUser{
-			Username: "operator",
-			Password: hashPassword("operator123"),
-			Role:     "operator",
-			Status:   "active",
-		})
-	}
-}
-
-func hashPassword(pwd string) string {
-	h := sha256.Sum256([]byte(pwd))
-	return hex.EncodeToString(h[:])
+	c.JSON(401, gin.H{"code": -1, "message": "用户名或密码错误"})
 }
 
 // ==================== 监控数据 ====================
@@ -630,114 +588,6 @@ func (h *Handler) DeleteBackup(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "已删除"})
 }
 
-// ==================== 系统用户管理 ====================
-
-func (h *Handler) ListUsers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
-	role := c.Query("role")
-	status := c.Query("status")
-
-	var total int64
-	var users []model.SysUser
-	query := h.db.Model(&model.SysUser{})
-	if role != "" {
-		query = query.Where("role = ?", role)
-	}
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	query.Count(&total)
-	query.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&users)
-	c.JSON(200, gin.H{"code": 0, "data": gin.H{"total": total, "list": users}})
-}
-
-func (h *Handler) CreateUser(c *gin.Context) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Email    string `json:"email"`
-		Phone    string `json:"phone"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
-		return
-	}
-	if req.Username == "" || req.Password == "" {
-		c.JSON(400, gin.H{"code": -1, "message": "用户名和密码不能为空"})
-		return
-	}
-	userRole := req.Role
-	if userRole == "" {
-		userRole = "user"
-	}
-	u := model.SysUser{
-		Username:  req.Username,
-		Password:  hashPassword(req.Password),
-		Role:      userRole,
-		Email:     req.Email,
-		Phone:     req.Phone,
-		Status:    "active",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	h.db.Create(&u)
-	h.logOperate(0, req.Username, "create", "user", fmt.Sprintf("%d", u.ID), "创建用户: "+req.Username)
-	c.JSON(200, gin.H{"code": 0, "data": u, "message": "用户已创建"})
-}
-
-func (h *Handler) UpdateUser(c *gin.Context) {
-	id := c.Param("id")
-	var user model.SysUser
-	if err := h.db.First(&user, id).Error; err != nil {
-		c.JSON(404, gin.H{"code": -1, "message": "用户不存在"})
-		return
-	}
-	var req struct {
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Email    string `json:"email"`
-		Phone    string `json:"phone"`
-		Status   string `json:"status"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": -1, "message": "参数错误"})
-		return
-	}
-	updates := map[string]interface{}{"updated_at": time.Now()}
-	if req.Password != "" {
-		updates["password"] = hashPassword(req.Password)
-	}
-	if req.Role != "" {
-		updates["role"] = req.Role
-	}
-	if req.Email != "" {
-		updates["email"] = req.Email
-	}
-	if req.Phone != "" {
-		updates["phone"] = req.Phone
-	}
-	if req.Status != "" {
-		updates["status"] = req.Status
-	}
-	h.db.Model(&user).Updates(updates)
-	h.logOperate(0, user.Username, "update", "user", id, "更新用户: "+user.Username)
-	c.JSON(200, gin.H{"code": 0, "message": "用户已更新"})
-}
-
-func (h *Handler) DeleteUser(c *gin.Context) {
-	id := c.Param("id")
-	var user model.SysUser
-	if err := h.db.First(&user, id).Error; err != nil {
-		c.JSON(404, gin.H{"code": -1, "message": "用户不存在"})
-		return
-	}
-	h.db.Delete(&user)
-	h.logOperate(0, user.Username, "delete", "user", id, "删除用户: "+user.Username)
-	c.JSON(200, gin.H{"code": 0, "message": "已删除"})
-}
-
 // ==================== 操作日志 ====================
 
 func (h *Handler) ListOperateLogs(c *gin.Context) {
@@ -810,21 +660,6 @@ func (h *Handler) AnalysisTrend(c *gin.Context) {
 		"alert_status":  alertStatus,
 		"agent_metrics": agentMetrics,
 	}})
-}
-
-// ==================== 内部辅助方法 ====================
-
-func (h *Handler) logOperate(userID uint, username, action, target, targetID, detail string) {
-	h.db.Create(&model.OperateLog{
-		UserID:    userID,
-		Username:  username,
-		Action:    action,
-		Target:    target,
-		TargetID:  targetID,
-		Detail:    detail,
-		Status:    "success",
-		CreatedAt: time.Now(),
-	})
 }
 
 func detectLevel(line string) string {
